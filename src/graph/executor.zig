@@ -13,7 +13,7 @@ const trajectory = @import("trajectory.zig");
 pub const ExecError = err.EngineError || err.GraphError || condition.EvalError;
 
 pub const Outcome = struct {
-    steps: []const trajectory.Step,
+    steps: []trajectory.Step,
     skipped: []const []const u8,
     path_prob: f32,
 };

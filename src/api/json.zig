@@ -290,6 +290,7 @@ const condition = @import("../graph/condition.zig");
 const gate = @import("../graph/gate.zig");
 const graph_mod = @import("../graph/types.zig");
 const executor = @import("../graph/executor.zig");
+const trajectory = @import("../graph/trajectory.zig");
 
 pub const RawGate = struct {
     threshold: f32,
@@ -479,13 +480,9 @@ test "write execute response shape" {
         .uncertainty = .{ .confidence = 0.6 },
         .latency_us = 12,
     };
+    var step_arr = [_]trajectory.Step{.{ .node_id = "n1", .decision_id = "c1", .result = r, .action = "go" }};
     const outcome: executor.Outcome = .{
-        .steps = &.{.{
-            .node_id = "n1",
-            .decision_id = "c1",
-            .result = r,
-            .action = "go",
-        }},
+        .steps = &step_arr,
         .skipped = &.{},
         .path_prob = 0.6,
     };
