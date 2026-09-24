@@ -14,6 +14,7 @@ pub const EngineError = ValidateError || error{
     ModelFailed,
     BadTemperature,
     BadState,
+    BadModelIO,
 };
 
 pub const GraphError = error{

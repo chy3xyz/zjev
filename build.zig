@@ -5,6 +5,8 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const onnx = b.option(bool, "onnx", "Enable ONNX Runtime backend") orelse false;
+    const onnx_lib_dir = b.option([]const u8, "onnx_lib_dir", "Directory containing onnxruntime lib") orelse "/opt/homebrew/lib";
+    const ort_lib = std.fmt.allocPrint(b.allocator, "{s}/libonnxruntime.dylib", .{onnx_lib_dir}) catch @panic("OOM");
     const mock_mode = b.option([]const u8, "mock_mode", "uniform|peaked|sequence") orelse "peaked";
 
     const options = b.addOptions();
@@ -17,7 +19,10 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     lib_module.addOptions("build_options", options);
-    if (onnx) lib_module.linkSystemLibrary("onnxruntime", .{});
+    if (onnx) {
+        lib_module.addObjectFile(.{ .cwd_relative = ort_lib });
+        lib_module.addRPath(.{ .cwd_relative = onnx_lib_dir });
+    }
 
     const lib = b.addLibrary(.{ .name = "zjev", .root_module = lib_module });
     b.installArtifact(lib);
@@ -44,6 +49,10 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     test_module.addOptions("build_options", options);
+    if (onnx) {
+        test_module.addObjectFile(.{ .cwd_relative = ort_lib });
+        test_module.addRPath(.{ .cwd_relative = onnx_lib_dir });
+    }
     const unit_tests = b.addTest(.{ .root_module = test_module });
     const run_unit = b.addRunArtifact(unit_tests);
     const main_unit_tests = b.addTest(.{ .root_module = main_test_module });

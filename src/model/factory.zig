@@ -24,6 +24,7 @@ pub const Config = struct {
     mock_mode: @import("mock.zig").Mode = .peaked,
     model_path: ?[]const u8 = null,
     num_sessions: u16 = 0,
+    ort_extensions: ?[]const u8 = null,
 };
 
 pub fn open(a: alloc.Allocator, io: std.Io, cfg: Config) !Model {
@@ -31,7 +32,7 @@ pub fn open(a: alloc.Allocator, io: std.Io, cfg: Config) !Model {
         .mock => @import("mock.zig").model(cfg.mock_mode, a),
         .onnx => blk: {
             if (!@import("build_options").onnx) return error.Unsupported;
-            break :blk @import("onnx.zig").openOnnx(a, io, cfg.model_path orelse return error.MissingModelPath, cfg.num_sessions);
+            break :blk @import("onnx.zig").openOnnx(a, io, cfg.model_path orelse return error.MissingModelPath, cfg.num_sessions, cfg.ort_extensions);
         },
     };
 }
