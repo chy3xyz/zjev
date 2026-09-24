@@ -14,6 +14,7 @@ pub const encoder = @import("model/encoder.zig");
 pub const head = @import("model/head.zig");
 pub const factory = @import("model/factory.zig");
 pub const mock = @import("model/mock.zig");
+pub const profile = @import("calib/profile.zig");
 
 test {
     std.testing.refAllDecls(@This());
