@@ -147,6 +147,15 @@ pub fn main(init: std.process.Init) !void {
             const aa: f64 = @as(f64, @floatFromInt(ac.abstain_correct)) / @as(f64, @floatFromInt(ac.abstain_total));
             try w.print(",\"abstention_accuracy\":{d:.6}", .{aa});
         }
+        const sr = zjev.stats.selectiveRisk(a, ac.conf.items, ac.ok.items, &zjev.stats.default_coverages) catch null;
+        if (sr) |pts| {
+            try w.writeAll(",\"selective_risk\":[");
+            for (pts, 0..) |pt, pi| {
+                if (pi > 0) try w.writeByte(',');
+                try w.print("{{\"coverage\":{d:.2},\"keep\":{d},\"n\":{d},\"risk\":{d:.6},\"threshold\":{d:.6}}}", .{ pt.coverage, pt.keep, pt.n, pt.risk, pt.threshold });
+            }
+            try w.writeByte(']');
+        }
         try w.writeByte('}');
     }
     if (skipped_rank > 0) {
