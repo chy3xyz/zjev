@@ -22,7 +22,7 @@ curl -s -X POST localhost:9377/v1/decide/batch -d @examples/batch_request.json
 curl -s -X POST localhost:9377/v1/execute -d @examples/execute_request.json   # V0.2 Decision Graph
 ```
 
-CLI 选项：`--bind` `--port` `--mock-mode uniform|peaked|sequence` `--profiles-dir <dir>` `--scheduler` `--cache` `--model <path.onnx>` `--sessions <n>`。不带 `--model` 使用 mock；带 `--model` 走 ONNX 后端（需 `-Donnx=true` 构建且本机装 onnxruntime），`model_name` 取文件名去扩展名，`--sessions` 为 onnxruntime 会话数（0=默认）。
+CLI 选项：`--bind` `--port` `--mock-mode uniform|peaked|sequence` `--profiles-dir <dir>` `--scheduler` `--cache` `--model <path.onnx>` `--sessions <n>` `--ort-extensions <path>`。不带 `--model` 使用 mock；带 `--model` 走 ONNX 后端（需 `-Donnx=true` 构建且本机装 onnxruntime），`model_name` 取文件名去扩展名，`--sessions` 为 onnxruntime 会话数（0=默认），`--ort-extensions` 为 onnxruntime-extensions 动态库路径（图含 ai.onnx.contrib 自定义 op 时必传）。
 
 ## 工具
 
@@ -48,15 +48,39 @@ selective risk 口径：按置信度降序（并列按下标）取前 ⌈coverag
 ## ONNX 后端（可选）
 
 导出约定：图内包含 tokenizer；输入 string tensor `text`，输出 float tensor `logits`
-（长度 = Σ logitCount(decisions)，schema 主序）。session intra-op 线程固定为 1，
-由 `std.Io` 调度层并行。
+（长度 = Σ logitCount(decisions)，schema 主序）。输出 shape 必须静态。图 = 固定
+决策束：请求 schema 的 Σ logitCount 必须与图一致，否则 400 BadModelIO。注意 noul
+请求默认 `abstain=true`（logitCount=3），与图不匹配时需显式 `"abstain":false`。
+session intra-op 线程固定为 1，由 `std.Io` 调度层并行。
 
 ```bash
-zig build -Donnx=true     # 需要系统安装 onnxruntime 动态库
-zig-out/bin/zjev-serve --model model/zjev-v1.onnx --sessions 4
+zig build -Donnx=true -Donnx_lib_dir=<dir>   # dir 内含 libonnxruntime.dylib
+./zig-out/bin/zjev-serve --model model/zjev-v1.onnx --sessions 4
 ```
 
-未安装时跳过；`-Donnx=true` 的链接错误是预期行为。未用 `-Donnx=true` 构建就传 `--model`，启动即报错并提示重建命令。
+未安装时跳过；链接错误是预期行为。未用 `-Donnx=true` 构建就传 `--model`，启动即报错并提示重建命令。
+
+**真模型已端到端打通（v0 plumbing）**：`export/laya/` 把 Laya 英文 checkpoint
+（ModernBERT-large，HuggingFace `convaiinnovations/laya`）导出为契约图
+（图内 HfJsonTokenizer + encoder + 随机 Linear head → 静态 logits[1,8]，
+示例束 escalate-noul(无abstain)/topic-choice3/urgency-score3）。概率无意义（随机 head）。
+
+```bash
+export/laya/.venv/bin/pip install -r export/laya/requirements.txt
+export/laya/.venv/bin/python export/laya/export_laya.py     # 产出 out/laya.onnx
+export/laya/.venv/bin/python export/laya/smoke_check.py
+zig build -Donnx=true -Donnx_lib_dir=$PWD/export/laya/lib
+./zig-out/bin/zjev-serve --model export/laya/out/laya.onnx \
+    --ort-extensions export/laya/lib/libortextensions.dylib --sessions 2
+```
+
+库配对注意：`export/laya/lib/` 是版本自洽的一对（onnxruntime 1.30 取自 pip 轮，
+libortextensions 0.15.2 取自 NuGet `Microsoft.ML.OnnxRuntime.Extensions`，均无
+python 依赖）。brew 的 onnxruntime 1.30 在 `RegisterCustomOpsLibrary` 路径上会段错误，
+勿混用。图含条件边（多 wave）时 ONNX 头暂不支持——executor 按 frontier 分批、每批
+Σ logitCount 需等于图长；平图（edges 为空）已验证。这是已知限制，见
+`docs/superpowers/specs/2026-09-24-laya-onnx-export-design.md`。
+
 
 ## 目录
 
