@@ -115,7 +115,7 @@ fn finishOne(
                 .uncertainty = .{
                     .entropy = stats.entropy(reg),
                     .confidence = conf,
-                    .abstention = view.abstain(),
+                    .abstention = if (c.abstain) probs[probs.len - 1] else null,
                 },
             };
         },
@@ -128,7 +128,7 @@ fn finishOne(
                 .probability = yes,
                 .uncertainty = .{
                     .confidence = yes,
-                    .abstention = view.abstain(),
+                    .abstention = if (n.abstain) probs[probs.len - 1] else null,
                 },
             };
         },
@@ -149,27 +149,34 @@ fn finishOne(
                         for (reg) |p| c = @max(c, p);
                         break :blk c;
                     },
-                    .abstention = view.abstain(),
+                    .abstention = if (sc_def.abstain) probs[probs.len - 1] else null,
                 },
             };
         },
         .rank => |r| {
             const entries = try a.alloc(result.RankEntry, r.items.len);
+            const scores = try a.alloc(f32, r.items.len);
             for (r.items, 0..) |id, i| {
-                entries[i] = .{ .id = id, .score = stats.sigmoid(z[i]) };
+                const item_score = stats.sigmoid(z[i]);
+                entries[i] = .{ .id = id, .score = item_score };
+                scores[i] = item_score;
             }
             std.sort.block(result.RankEntry, entries, {}, entryLess);
+            var total: f32 = 0;
+            for (scores) |sv| total += sv;
+            const norm = try a.dupe(f32, scores);
+            for (norm) |*p| p.* /= total;
             return .{
                 .id = r.id,
                 .type = .rank,
                 .value = .{ .rank = entries },
-                .probabilities = probs,
+                .probabilities = scores,
                 .labels = r.items,
                 .uncertainty = .{
-                    .entropy = stats.entropy(probs),
+                    .entropy = stats.entropy(norm),
                     .confidence = blk: {
                         var c: f32 = 0;
-                        for (probs) |p| c = @max(c, p);
+                        for (scores) |sv| c = @max(c, sv);
                         break :blk c;
                     },
                 },

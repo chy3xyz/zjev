@@ -59,7 +59,7 @@ pub const Profiles = struct {
         while (try it.next(io)) |entry| {
             if (entry.kind != .file) continue;
             if (!std.mem.endsWith(u8, entry.name, ".json")) continue;
-            const bytes = try dir.readFileAlloc(io, self.a, entry.name, .{ .limit = .limited(1 << 20) });
+            const bytes = try dir.readFileAlloc(io, entry.name, self.a, .limited(1 << 20));
             const parsed = try std.json.parseFromSlice(Profile, self.a, bytes, .{ .ignore_unknown_fields = true });
             try self.parsed_list.append(self.a, parsed);
             try self.put(parsed.value);
