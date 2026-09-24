@@ -49,6 +49,26 @@ def stage_files(repo_id: str) -> Path:
     return STAGE
 
 
+def load_laya_encoder(stage_dir: str):
+    """Load the Laya ModernBERT with REAL weights.
+
+    The HF repo's checkpoint prefixes the base encoder with "encoder."
+    (plus Laya's own act_head/scorer/head extras). transformers 5.x does NOT
+    auto-strip the prefix: naive from_pretrained silently leaves the whole
+    encoder randomly initialized (LOAD REPORT: 0 direct hits, all MISSING).
+    We strip the prefix and load manually; Laya's downstream heads are dropped.
+    """
+    from safetensors.torch import load_file
+    model = AutoModel.from_pretrained(stage_dir)
+    sd = load_file(str(Path(stage_dir) / "model.safetensors"))
+    base = {k[len("encoder."):]: v for k, v in sd.items() if k.startswith("encoder.")}
+    missing, unexpected = model.load_state_dict(base, strict=False)
+    assert not missing, f"missing keys after prefix strip: {missing[:5]}"
+    log(f"encoder weights loaded: {len(base)} tensors "
+        f"(dropped Laya heads: {len(unexpected)})")
+    return model
+
+
 def export_encoder(model, out_path: str):
     ids = torch.ones(1, 8, dtype=torch.long)
     mask = torch.ones(1, 8, dtype=torch.long)
@@ -170,7 +190,7 @@ def main():
     pad_id = tk.token_to_id("[PAD]")
     assert pad_id is not None, "no [PAD] token in tokenizer"
     log("pad_id:", pad_id)
-    model = AutoModel.from_pretrained(str(stage))
+    model = load_laya_encoder(str(stage))
     model.eval()
     hidden = model.config.hidden_size
     assert hidden == 1024, hidden
