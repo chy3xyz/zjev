@@ -14,3 +14,7 @@ pub const Model = struct {
         self.deinitFn(self.ptr, a);
     }
 };
+
+pub fn mockModel(mode: @import("mock.zig").Mode, a: alloc.Allocator) error{OutOfMemory}!Model {
+    return @import("mock.zig").model(mode, a);
+}

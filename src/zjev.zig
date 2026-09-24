@@ -15,6 +15,7 @@ pub const head = @import("model/head.zig");
 pub const factory = @import("model/factory.zig");
 pub const mock = @import("model/mock.zig");
 pub const profile = @import("calib/profile.zig");
+pub const engine = @import("runtime/engine.zig");
 
 test {
     std.testing.refAllDecls(@This());

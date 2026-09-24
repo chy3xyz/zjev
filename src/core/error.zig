@@ -13,4 +13,5 @@ pub const ValidateError = error{
 pub const EngineError = ValidateError || error{
     ModelFailed,
     BadTemperature,
+    BadState,
 };
