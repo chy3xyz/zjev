@@ -52,4 +52,24 @@ pub fn build(b: *std.Build) void {
     const run_conf = b.addRunArtifact(conf_exe);
     const conf_step = b.step("test-conformance", "Run conformance fixtures");
     conf_step.dependOn(&run_conf.step);
+
+    const tools = .{
+        .{ .name = "zjev-fit", .root = "tools/fit.zig" },
+        .{ .name = "zjev-bench", .root = "tools/bench.zig" },
+    };
+    inline for (tools) |t| {
+        const tool_module = b.createModule(.{
+            .root_source_file = b.path(t.root),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{ .{ .name = "zjev", .module = lib_module }, .{ .name = "dataset", .module = b.createModule(.{
+                .root_source_file = b.path("tools/dataset.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{.{ .name = "zjev", .module = lib_module }},
+            }) } },
+        });
+        const tool_exe = b.addExecutable(.{ .name = t.name, .root_module = tool_module });
+        b.installArtifact(tool_exe);
+    }
 }

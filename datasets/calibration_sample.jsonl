@@ -1,0 +1,6 @@
+{"state":{"id":"s1","text":"user churn signal A"},"decision":{"id":"c","type":"choice","options":["low","high"]},"label":"low"}
+{"state":{"id":"s2","text":"user churn signal B"},"decision":{"id":"c","type":"choice","options":["low","high"]},"label":"high"}
+{"state":{"id":"s3","text":"fraud pattern X"},"decision":{"id":"c","type":"choice","options":["low","high"]},"label":"high"}
+{"state":{"id":"s4","text":"fraud pattern Y"},"decision":{"id":"c","type":"choice","options":["low","high"]},"label":"low"}
+{"state":{"id":"s5","text":"should refund?"},"decision":{"id":"n","type":"noul","abstain":false},"label":true}
+{"state":{"id":"s6","text":"should refund?"},"decision":{"id":"n","type":"noul","abstain":false},"label":false}
