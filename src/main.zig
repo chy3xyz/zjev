@@ -1,43 +1,63 @@
 const std = @import("std");
 const zjev = @import("zjev");
 
-pub fn main(init: std.process.Init) !void {
-    const gpa = init.gpa;
-    const args = try init.minimal.args.toSlice(init.arena.allocator());
+pub const Cli = struct {
+    bind: []const u8 = "127.0.0.1",
+    port: u16 = 9377,
+    mock_mode: []const u8 = "peaked",
+    profiles_dir: ?[]const u8 = null,
+    use_scheduler: bool = false,
+    cache_enabled: bool = false,
+    model_path: ?[]const u8 = null,
+    num_sessions: u16 = 0,
+};
 
-    var bind: []const u8 = "127.0.0.1";
-    var port: u16 = 9377;
-    var mock_mode: []const u8 = "peaked";
-    var profiles_dir: ?[]const u8 = null;
-    var use_scheduler = false;
-    var cache_enabled = false;
+pub fn parseCli(args: []const []const u8) error{ InvalidPort, InvalidSessions }!Cli {
+    var cli = Cli{};
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
         if (std.mem.eql(u8, arg, "--bind") and i + 1 < args.len) {
             i += 1;
-            bind = args[i];
+            cli.bind = args[i];
         } else if (std.mem.eql(u8, arg, "--port") and i + 1 < args.len) {
             i += 1;
-            port = try std.fmt.parseInt(u16, args[i], 10);
+            cli.port = std.fmt.parseInt(u16, args[i], 10) catch return error.InvalidPort;
         } else if (std.mem.eql(u8, arg, "--mock-mode") and i + 1 < args.len) {
             i += 1;
-            mock_mode = args[i];
+            cli.mock_mode = args[i];
         } else if (std.mem.eql(u8, arg, "--profiles-dir") and i + 1 < args.len) {
             i += 1;
-            profiles_dir = args[i];
+            cli.profiles_dir = args[i];
+        } else if (std.mem.eql(u8, arg, "--model") and i + 1 < args.len) {
+            i += 1;
+            cli.model_path = args[i];
+        } else if (std.mem.eql(u8, arg, "--sessions") and i + 1 < args.len) {
+            i += 1;
+            cli.num_sessions = std.fmt.parseInt(u16, args[i], 10) catch return error.InvalidSessions;
         } else if (std.mem.eql(u8, arg, "--scheduler")) {
-            use_scheduler = true;
+            cli.use_scheduler = true;
         } else if (std.mem.eql(u8, arg, "--cache")) {
-            cache_enabled = true;
+            cli.cache_enabled = true;
         } else {
             std.log.warn("unknown arg: {s}", .{arg});
         }
     }
+    return cli;
+}
 
-    const mode: zjev.mock.Mode = if (std.mem.eql(u8, mock_mode, "uniform"))
+pub fn main(init: std.process.Init) !void {
+    const gpa = init.gpa;
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
+
+    const cli = parseCli(args) catch |err| {
+        std.log.err("invalid arguments: {s}", .{@errorName(err)});
+        return err;
+    };
+
+    const mode: zjev.mock.Mode = if (std.mem.eql(u8, cli.mock_mode, "uniform"))
         .uniform
-    else if (std.mem.eql(u8, mock_mode, "sequence"))
+    else if (std.mem.eql(u8, cli.mock_mode, "sequence"))
         .sequence
     else
         .peaked;
@@ -51,7 +71,7 @@ pub fn main(init: std.process.Init) !void {
 
     var profiles_storage: zjev.profile.Profiles = undefined;
     var profiles_ptr: ?*zjev.profile.Profiles = null;
-    if (profiles_dir) |dir| {
+    if (cli.profiles_dir) |dir| {
         profiles_storage = zjev.profile.Profiles.init(gpa);
         try profiles_storage.loadDir(tio, dir);
         profiles_ptr = &profiles_storage;
@@ -69,21 +89,49 @@ pub fn main(init: std.process.Init) !void {
         .scheduler = null,
     };
 
-    var sched = zjev.scheduler.Scheduler.init(sched_storage, &shared, tio, cache_enabled);
+    var sched = zjev.scheduler.Scheduler.init(sched_storage, &shared, tio, cli.cache_enabled);
     var sgroup: std.Io.Group = .init;
-    if (use_scheduler) {
+    if (cli.use_scheduler) {
         shared.scheduler = &sched;
         sgroup.async(tio, schedRunner, .{ tio, &sched });
     }
 
-    const addr = try std.Io.net.IpAddress.parse(bind, port);
+    const addr = try std.Io.net.IpAddress.parse(cli.bind, cli.port);
     var listener = try addr.listen(tio, .{ .mode = .stream });
     defer listener.deinit(tio);
 
-    std.log.info("zjev-serve listening on {s}:{d} (scheduler={})", .{ bind, port, use_scheduler });
+    std.log.info("zjev-serve listening on {s}:{d} (scheduler={})", .{ cli.bind, cli.port, cli.use_scheduler });
     try zjev.server.run(tio, &shared, &listener);
 }
 
 fn schedRunner(io: std.Io, sched: *zjev.scheduler.Scheduler) void {
     sched.start(io, @max(1, (std.Thread.getCpuCount() catch 4) / 2));
+}
+
+test "parseCli defaults" {
+    const cli = try parseCli(&.{"zjev-serve"});
+    try std.testing.expectEqualStrings("127.0.0.1", cli.bind);
+    try std.testing.expectEqual(@as(u16, 9377), cli.port);
+    try std.testing.expectEqualStrings("peaked", cli.mock_mode);
+    try std.testing.expectEqual(@as(?[]const u8, null), cli.model_path);
+    try std.testing.expectEqual(@as(u16, 0), cli.num_sessions);
+    try std.testing.expect(!cli.use_scheduler);
+    try std.testing.expect(!cli.cache_enabled);
+}
+
+test "parseCli model and sessions" {
+    const cli = try parseCli(&.{
+        "zjev-serve", "--model", "/models/zjev-v1.onnx", "--sessions", "8", "--port", "18080",
+    });
+    try std.testing.expectEqualStrings("/models/zjev-v1.onnx", cli.model_path.?);
+    try std.testing.expectEqual(@as(u16, 8), cli.num_sessions);
+    try std.testing.expectEqual(@as(u16, 18080), cli.port);
+}
+
+test "parseCli invalid port" {
+    try std.testing.expectError(error.InvalidPort, parseCli(&.{ "zjev-serve", "--port", "abc" }));
+}
+
+test "parseCli invalid sessions" {
+    try std.testing.expectError(error.InvalidSessions, parseCli(&.{ "zjev-serve", "--sessions", "x" }));
 }
