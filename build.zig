@@ -56,6 +56,7 @@ pub fn build(b: *std.Build) void {
     const tools = .{
         .{ .name = "zjev-fit", .root = "tools/fit.zig" },
         .{ .name = "zjev-bench", .root = "tools/bench.zig" },
+        .{ .name = "zjev-traj", .root = "tools/traj.zig" },
     };
     inline for (tools) |t| {
         const tool_module = b.createModule(.{
