@@ -25,6 +25,7 @@ pub const temperature = @import("calib/temperature.zig");
 pub const graph = @import("graph/types.zig");
 pub const condition = @import("graph/condition.zig");
 pub const gate = @import("graph/gate.zig");
+pub const trajectory = @import("graph/trajectory.zig");
 
 test {
     std.testing.refAllDecls(@This());
