@@ -1,0 +1,20 @@
+{
+  "state": { "text": "用户近 24h 链上交易 17 笔，余额 3.2 SOL，合约交互 8 次" },
+  "decisions": [
+    { "id": "risk_level", "type": "choice", "options": ["low", "medium", "high"], "abstain": true },
+    { "id": "needs_intervention", "type": "noul" }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "risk",
+        "decision": "risk_level",
+        "gate": { "threshold": 0.7, "action_above": "escalate", "action_below": "log", "action_abstain": "manual_review" }
+      },
+      { "id": "intervention", "decision": "needs_intervention" }
+    ],
+    "edges": [
+      { "from": "risk", "to": "intervention", "when": "risk_level == high" }
+    ]
+  }
+}
