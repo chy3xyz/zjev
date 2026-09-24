@@ -22,6 +22,7 @@ pub const cache = @import("runtime/cache.zig");
 pub const scheduler = @import("runtime/scheduler.zig");
 pub const server = @import("api/server.zig");
 pub const temperature = @import("calib/temperature.zig");
+pub const graph = @import("graph/types.zig");
 
 test {
     std.testing.refAllDecls(@This());
