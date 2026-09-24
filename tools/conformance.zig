@@ -38,8 +38,12 @@ const Fixture = struct {
     name: []const u8,
     mode: []const u8,
     request: zjev.api_json.RawRequest,
+    graph: ?zjev.api_json.RawGraph = null,
     expect_error: ?[]const u8 = null,
     expect: ?Expect = null,
+    expect_path: ?[]const []const u8 = null,
+    expect_skipped: ?[]const []const u8 = null,
+    expect_step0_action: ?[]const u8 = null,
 };
 
 const Expect = struct {
@@ -77,6 +81,40 @@ fn runFixture(gpa: std.mem.Allocator, bytes: []const u8) !bool {
         std.debug.print("  parse error: {s}\n", .{@errorName(e)});
         return false;
     };
+    if (fx.graph) |rg| {
+        const ex_req = zjev.api_json.fromRawExecute(a, .{
+            .state = fx.request.state,
+            .decisions = fx.request.decisions,
+            .domain = fx.request.domain,
+            .policy = fx.request.policy,
+            .graph = rg,
+        }) catch {
+            return fx.expect_error != null;
+        };
+        if (fx.expect_error != null) return false;
+        const outcome = zjev.executor.execute(a, &model, &ex_req.state, ex_req.schemas, ex_req.graph, null) catch {
+            return fx.expect_error != null;
+        };
+        if (fx.expect_path) |want| {
+            if (outcome.steps.len != want.len) return false;
+            for (outcome.steps, want) |st, w| {
+                if (!std.mem.eql(u8, st.node_id, w)) return false;
+            }
+        }
+        if (fx.expect_skipped) |want| {
+            if (outcome.skipped.len != want.len) return false;
+            for (outcome.skipped, want) |sk, w| {
+                if (!std.mem.eql(u8, sk, w)) return false;
+            }
+        }
+        if (fx.expect_step0_action) |want| {
+            if (outcome.steps.len == 0) return false;
+            const act = outcome.steps[0].action orelse return false;
+            if (!std.mem.eql(u8, act, want)) return false;
+        }
+        return true;
+    }
+
     if (fx.expect_error != null) {
         zjev.schema.validateSet(parsed.schemas, a) catch return true;
         std.debug.print("  expected error but validated\n", .{});

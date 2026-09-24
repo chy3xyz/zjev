@@ -1,0 +1,13 @@
+{
+  "name": "execute condition type error",
+  "mode": "sequence",
+  "request": {
+    "state": { "text": "x" },
+    "decisions": [ { "id": "n", "type": "noul" } ]
+  },
+  "graph": {
+    "nodes": [ { "id": "n1", "decision": "n" } ],
+    "edges": [ { "from": "n1", "to": "n1", "when": "n > true" } ]
+  },
+  "expect_error": "invalid_graph"
+}

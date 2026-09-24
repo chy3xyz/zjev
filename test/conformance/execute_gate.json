@@ -1,0 +1,20 @@
+{
+  "name": "execute gate action",
+  "mode": "sequence",
+  "request": {
+    "state": { "text": "x" },
+    "decisions": [ { "id": "c1", "type": "choice", "options": ["a", "b"] } ]
+  },
+  "graph": {
+    "nodes": [
+      {
+        "id": "n1",
+        "decision": "c1",
+        "gate": { "threshold": 0.5, "action_above": "go", "action_below": "stop", "action_abstain": "review" }
+      }
+    ],
+    "edges": []
+  },
+  "expect_path": ["n1"],
+  "expect_step0_action": "go"
+}

@@ -1,0 +1,22 @@
+{
+  "name": "execute cycle rejected",
+  "mode": "sequence",
+  "request": {
+    "state": { "text": "x" },
+    "decisions": [
+      { "id": "c1", "type": "choice", "options": ["a"] },
+      { "id": "c2", "type": "choice", "options": ["a"] }
+    ]
+  },
+  "graph": {
+    "nodes": [
+      { "id": "n1", "decision": "c1" },
+      { "id": "n2", "decision": "c2" }
+    ],
+    "edges": [
+      { "from": "n1", "to": "n2", "when": "c1 == a" },
+      { "from": "n2", "to": "n1", "when": "c2 == a" }
+    ]
+  },
+  "expect_error": "invalid_graph"
+}

@@ -1,0 +1,25 @@
+{
+  "name": "execute conditional prune",
+  "mode": "sequence",
+  "request": {
+    "state": { "text": "x" },
+    "decisions": [
+      { "id": "c1", "type": "choice", "options": ["a", "b"] },
+      { "id": "c2", "type": "choice", "options": ["x", "y"] },
+      { "id": "c3", "type": "choice", "options": ["u", "v"] }
+    ]
+  },
+  "graph": {
+    "nodes": [
+      { "id": "r", "decision": "c1" },
+      { "id": "hit", "decision": "c2" },
+      { "id": "miss", "decision": "c3" }
+    ],
+    "edges": [
+      { "from": "r", "to": "hit", "when": "c1 == a" },
+      { "from": "r", "to": "miss", "when": "c1 == b" }
+    ]
+  },
+  "expect_path": ["r", "hit"],
+  "expect_skipped": ["miss"]
+}
