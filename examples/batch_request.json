@@ -1,0 +1,4 @@
+{"requests":[
+  {"state":{"text":"a"},"decisions":[{"id":"n","type":"noul"}]},
+  {"state":{"text":"b"},"decisions":[{"id":"c","type":"choice","options":["x","y"],"abstain":true}]}
+]}

@@ -1,0 +1,7 @@
+{
+  "state": { "text": "用户近 24h 链上交易 17 笔，余额 3.2 SOL，合约交互 8 次" },
+  "decisions": [
+    { "id": "risk_level", "type": "choice", "options": ["low", "medium", "high"], "abstain": true },
+    { "id": "churn_7d", "type": "score", "scale": { "min": 1, "max": 5 } }
+  ]
+}
