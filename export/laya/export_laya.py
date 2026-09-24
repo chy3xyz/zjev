@@ -49,6 +49,26 @@ def stage_files(repo_id: str) -> Path:
     return STAGE
 
 
+def load_laya_encoder(stage_dir: str):
+    """Load the Laya ModernBERT with REAL weights.
+
+    The HF repo's checkpoint prefixes the base encoder with "encoder."
+    (plus Laya's own act_head/scorer/head extras). transformers 5.x does NOT
+    auto-strip the prefix: naive from_pretrained silently leaves the whole
+    encoder randomly initialized (LOAD REPORT: 0 direct hits, all MISSING).
+    We strip the prefix and load manually; Laya's downstream heads are dropped.
+    """
+    from safetensors.torch import load_file
+    model = AutoModel.from_pretrained(stage_dir)
+    sd = load_file(str(Path(stage_dir) / "model.safetensors"))
+    base = {k[len("encoder."):]: v for k, v in sd.items() if k.startswith("encoder.")}
+    missing, unexpected = model.load_state_dict(base, strict=False)
+    assert not missing, f"missing keys after prefix strip: {missing[:5]}"
+    log(f"encoder weights loaded: {len(base)} tensors "
+        f"(dropped Laya heads: {len(unexpected)})")
+    return model
+
+
 def export_encoder(model, out_path: str):
     ids = torch.ones(1, 8, dtype=torch.long)
     mask = torch.ones(1, 8, dtype=torch.long)
@@ -120,15 +140,26 @@ def tokenizer_graph(stage_dir: str, pad_id: int):
     return m, ids_i64
 
 
-def add_head(merged: onnx.ModelProto, hidden_size: int) -> onnx.ModelProto:
-    """[CLS] -> Linear(hidden->NUM_LOGITS) -> logits[1,NUM_LOGITS] (static)."""
+def add_head(merged: onnx.ModelProto, hidden_size: int, head_path: str | None = None) -> onnx.ModelProto:
+    """[CLS] -> Linear(hidden->NUM_LOGITS) -> logits[1,NUM_LOGITS] (static).
+
+    head_path: trained checkpoint {"weight"[8,H], "bias"[8]} (torch .pt);
+    default random init (seed 42) for v0 plumbing.
+    """
     g = merged.graph
     lhs = g.output[0].name            # last_hidden_state [1,seq,H]
     g.output.pop()
 
-    rng = np.random.default_rng(SEED)
-    W = (rng.standard_normal((hidden_size, NUM_LOGITS)) * HEAD_SCALE).astype(np.float32)
-    b = np.zeros(NUM_LOGITS, dtype=np.float32)
+    if head_path:
+        sd = torch.load(head_path, map_location="cpu")
+        W = sd["weight"].numpy().T.astype(np.float32)  # [8,H] -> [H,8]
+        b = sd["bias"].numpy().astype(np.float32)
+        log("loaded trained head:", head_path)
+    else:
+        rng = np.random.default_rng(SEED)
+        W = (rng.standard_normal((hidden_size, NUM_LOGITS)) * HEAD_SCALE).astype(np.float32)
+        b = np.zeros(NUM_LOGITS, dtype=np.float32)
+    assert W.shape == (hidden_size, NUM_LOGITS), W.shape
 
     init = lambda name, arr: g.initializer.append(numpy_helper.from_array(arr, name))
     init("head_W", W)
@@ -149,6 +180,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--repo-id", default=REPO_ID)
     ap.add_argument("--out", default=str(Path(__file__).parent / "out" / "laya.onnx"))
+    ap.add_argument("--head", default=None,
+                    help="trained head .pt (weight[8,H]/bias[8]); default random seed 42")
     a = ap.parse_args()
 
     stage = stage_files(a.repo_id)
@@ -157,7 +190,7 @@ def main():
     pad_id = tk.token_to_id("[PAD]")
     assert pad_id is not None, "no [PAD] token in tokenizer"
     log("pad_id:", pad_id)
-    model = AutoModel.from_pretrained(str(stage))
+    model = load_laya_encoder(str(stage))
     model.eval()
     hidden = model.config.hidden_size
     assert hidden == 1024, hidden
@@ -183,7 +216,7 @@ def main():
     del merged.opset_import[:]
     merged.opset_import.append(onnx.helper.make_opsetid("", 18))
     merged.opset_import.append(onnx.helper.make_opsetid("ai.onnx.contrib", 1))
-    final = add_head(merged, hidden)
+    final = add_head(merged, hidden, a.head)
 
     onnx.checker.check_model(final)
     onnx.save(final, a.out)

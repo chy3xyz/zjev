@@ -61,10 +61,31 @@ zig build -Donnx=true -Donnx_lib_dir=<dir>   # dir 内含 libonnxruntime.dylib
 
 未安装时跳过；链接错误是预期行为。未用 `-Donnx=true` 构建就传 `--model`，启动即报错并提示重建命令。
 
-**真模型已端到端打通（v0 plumbing）**：`export/laya/` 把 Laya 英文 checkpoint
+**真模型已端到端打通（M2 自训 head）**：`export/laya/` 把 Laya 英文 checkpoint
 （ModernBERT-large，HuggingFace `convaiinnovations/laya`）导出为契约图
-（图内 HfJsonTokenizer + encoder + 随机 Linear head → 静态 logits[1,8]，
-示例束 escalate-noul(无abstain)/topic-choice3/urgency-score3）。概率无意义（随机 head）。
+（图内 HfJsonTokenizer + encoder + 决策 head → 静态 logits[1,8]，
+示例束 escalate-noul(无abstain)/topic-choice3/urgency-score3）。
+
+注意：transformers 5.x 不会自动剥离该 checkpoint 的 `encoder.` 前缀，naive
+`from_pretrained` 会让整个 encoder 随机初始化（2026-09-25 已修，
+`load_laya_encoder()` 手动加载并断言逐位一致——此前导出的图 encoder 均为随机）。
+
+M2 全链路（数据→训练→导出→实测）：
+
+```bash
+export/laya/.venv/bin/python export/laya/build_dataset.py   # HF 工单 → 8-logit 束（train/eval）
+export/laya/.venv/bin/python export/laya/train_head.py      # 冻结 encoder 训 Linear(1024,8)（MPS）
+export/laya/.venv/bin/python export/laya/export_laya.py --head export/laya/out/head.pt
+export/laya/.venv/bin/python export/laya/smoke_check.py
+./zig-out/bin/zjev-traj --dataset datasets/support_bundle_eval.jsonl \
+    --model export/laya/out/laya.onnx \
+    --ort-extensions export/laya/lib/libortextensions.dylib 2>readings.json
+```
+
+实测读数（5652 条 eval，trajectory_accuracy 0.548 / traj_ece 0.173 / escalate
+节点 ece 0.381）与解读见 `benchmarks/traj_laya_2026-09-25.md`；head 训练指标
+eval acc：escalate 0.659 / topic 0.792 / urgency 0.487。已知限制：合成模板数据、
+escalate 与 urgency 标签共线、冻结 encoder 容量受限（升级方向见 benchmark）。
 
 ```bash
 export/laya/.venv/bin/pip install -r export/laya/requirements.txt
