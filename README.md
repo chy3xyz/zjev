@@ -22,7 +22,7 @@ curl -s -X POST localhost:9377/v1/decide/batch -d @examples/batch_request.json
 curl -s -X POST localhost:9377/v1/execute -d @examples/execute_request.json   # V0.2 Decision Graph
 ```
 
-CLI 选项：`--bind` `--port` `--mock-mode uniform|peaked|sequence` `--profiles-dir <dir>` `--scheduler` `--cache`。
+CLI 选项：`--bind` `--port` `--mock-mode uniform|peaked|sequence` `--profiles-dir <dir>` `--scheduler` `--cache` `--model <path.onnx>` `--sessions <n>`。不带 `--model` 使用 mock；带 `--model` 走 ONNX 后端（需 `-Donnx=true` 构建且本机装 onnxruntime），`model_name` 取文件名去扩展名，`--sessions` 为 onnxruntime 会话数（0=默认）。
 
 ## 工具
 
@@ -53,9 +53,10 @@ selective risk 口径：按置信度降序（并列按下标）取前 ⌈coverag
 
 ```bash
 zig build -Donnx=true     # 需要系统安装 onnxruntime 动态库
+zig-out/bin/zjev-serve --model model/zjev-v1.onnx --sessions 4
 ```
 
-未安装时跳过；`-Donnx=true` 的链接错误是预期行为。
+未安装时跳过；`-Donnx=true` 的链接错误是预期行为。未用 `-Donnx=true` 构建就传 `--model`，启动即报错并提示重建命令。
 
 ## 目录
 
