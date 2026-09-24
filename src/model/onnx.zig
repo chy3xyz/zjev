@@ -76,9 +76,9 @@ fn outputLogitCount(ort: *const api.OrtApi, sess: *api.OrtSession) Error!usize {
     var type_info: ?*api.OrtTypeInfo = null;
     try checkStatus(ort, ort.SessionGetOutputTypeInfo(sess, 0, &type_info), error.BadModelIO);
     defer ort.ReleaseTypeInfo(type_info);
-    var tensor_info: ?*api.OrtTensorTypeAndShapeInfo = null;
+    var tensor_info: ?*const api.OrtTensorTypeAndShapeInfo = null;
     try checkStatus(ort, ort.CastTypeInfoToTensorInfo(type_info, &tensor_info), error.BadModelIO);
-    defer ort.ReleaseTensorTypeAndShapeInfo(tensor_info);
+    defer if (tensor_info) |ti| ort.ReleaseTensorTypeAndShapeInfo(@constCast(ti));
     var count: usize = 0;
     try checkStatus(ort, ort.GetTensorShapeElementCount(tensor_info, &count), error.BadModelIO);
     return count;
@@ -99,28 +99,28 @@ fn nameIs(ort: *const api.OrtApi, allocator: *api.OrtAllocator, sess: *api.OrtSe
 fn encodeImpl(ptr: *anyopaque, a: alloc.Allocator, s: *const state.State) encoder.Error!*encoder.HiddenState {
     const self: *Onnx = @ptrCast(@alignCast(ptr));
     const text = s.text orelse s.id orelse "";
-    const ztext = a.dupeZ(u8, text) catch return error.OutOfMemory;
+    const ztext = a.dupeSentinel(u8, text, 0) catch return error.OutOfMemory;
 
     const session = self.idle.getOne(self.io) catch return error.ModelFailed;
     errdefer self.idle.putOneUncancelable(self.io, session) catch {};
 
     var input_value: ?*api.OrtValue = null;
     const dims = [1]i64{1};
-    try checkStatus(self.ort, self.ort.CreateTensorAsOrtValue(self.allocator, &dims, 1, .string, &input_value), error.RunFailed);
+    checkStatus(self.ort, self.ort.CreateTensorAsOrtValue(self.allocator, &dims, 1, .string, &input_value), error.RunFailed) catch return error.ModelFailed;
     defer self.ort.ReleaseValue(input_value);
-    const strs = [1][*:0]const u8{ztext.ptr};
-    try checkStatus(self.ort, self.ort.FillStringTensor(input_value, &strs, 1), error.RunFailed);
+    var strs = [1][*:0]const u8{ztext.ptr};
+    checkStatus(self.ort, self.ort.FillStringTensor(input_value, &strs, 1), error.RunFailed) catch return error.ModelFailed;
 
     var output_value: ?*api.OrtValue = null;
-    const in_names = [1][*:0]const u8{self.in_name};
-    const out_names = [1][*:0]const u8{self.out_name};
-    const inputs = [1]?*const api.OrtValue{input_value};
-    try checkStatus(self.ort, self.ort.Run(session.handle, null, &in_names, &inputs, 1, &out_names, 1, @ptrCast(&output_value)), error.RunFailed);
+    var in_names = [1][*:0]const u8{self.in_name};
+    var out_names = [1][*:0]const u8{self.out_name};
+    var inputs = [1]?*const api.OrtValue{input_value};
+    checkStatus(self.ort, self.ort.Run(session.handle, null, &in_names, &inputs, 1, &out_names, 1, @ptrCast(&output_value)), error.RunFailed) catch return error.ModelFailed;
 
     var data_ptr: ?*anyopaque = null;
     checkStatus(self.ort, self.ort.GetTensorMutableData(output_value, @ptrCast(&data_ptr)), error.RunFailed) catch {
         self.ort.ReleaseValue(output_value);
-        return error.RunFailed;
+        return error.ModelFailed;
     };
     const n = session.total_logits;
     const raw: [*]f32 = @ptrCast(@alignCast(data_ptr.?));
@@ -189,7 +189,7 @@ pub fn openOnnx(a: alloc.Allocator, io: std.Io, model_path: []const u8, num_sess
     var allocator: ?*api.OrtAllocator = null;
     try checkStatus(ort, ort.GetAllocatorWithDefaultOptions(&allocator), error.OrtInitFailed);
 
-    const zpath = try a.dupeZ(u8, model_path);
+    const zpath = try a.dupeSentinel(u8, model_path, 0);
     const count: usize = if (num_sessions == 0)
         @max(1, (std.Thread.getCpuCount() catch 4) / 2)
     else

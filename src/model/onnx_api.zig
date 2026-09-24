@@ -77,7 +77,7 @@ pub const OrtApi = extern struct {
     DisableTelemetryEvents: *const fn (?*const OrtEnv) callconv(.c) ?*OrtStatus,
     CreateSession: *const fn (?*const OrtEnv, [*c]const ORTCHAR_T, ?*const OrtSessionOptions, *?*OrtSession) callconv(.c) ?*OrtStatus,
     CreateSessionFromArray: *const fn (?*const OrtEnv, ?*anyopaque, usize, ?*const OrtSessionOptions, *?*OrtSession) callconv(.c) ?*OrtStatus,
-    Run: *const fn (?*OrtSession, ?*const OrtRunOptions, [*c][*:0]const u8, *?*const OrtValue, usize, [*c][*:0]const u8, usize, *?*OrtValue) callconv(.c) ?*OrtStatus,
+    Run: *const fn (?*OrtSession, ?*const OrtRunOptions, [*c][*:0]const u8, [*c]const ?*const OrtValue, usize, [*c][*:0]const u8, usize, *?*OrtValue) callconv(.c) ?*OrtStatus,
     CreateSessionOptions: *const fn (*?*OrtSessionOptions) callconv(.c) ?*OrtStatus,
     SetOptimizedModelFilePath: *const fn (?*OrtSessionOptions, [*c]const ORTCHAR_T) callconv(.c) ?*OrtStatus,
     CloneSessionOptions: *const fn (?*const OrtSessionOptions, *?*OrtSessionOptions) callconv(.c) ?*OrtStatus,

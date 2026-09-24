@@ -2,7 +2,7 @@ const alloc = @import("../core/alloc.zig");
 const encoder = @import("encoder.zig");
 const schema = @import("../core/schema.zig");
 
-pub const Error = encoder.Error;
+pub const Error = encoder.Error || error{BadModelIO};
 
 pub const VTable = struct {
     decide: *const fn (
