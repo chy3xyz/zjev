@@ -46,6 +46,12 @@ pub fn parseCli(args: []const []const u8) error{ InvalidPort, InvalidSessions }!
     return cli;
 }
 
+pub fn modelNameFromPath(path: []const u8) []const u8 {
+    const base = if (std.mem.lastIndexOfScalar(u8, path, '/')) |idx| path[idx + 1 ..] else path;
+    if (std.mem.lastIndexOfScalar(u8, base, '.')) |dot| return base[0..dot];
+    return base;
+}
+
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const args = try init.minimal.args.toSlice(init.arena.allocator());
@@ -66,7 +72,19 @@ pub fn main(init: std.process.Init) !void {
     defer threaded.deinit();
     const tio = threaded.io();
 
-    var model = try zjev.mock.model(mode, gpa);
+    var model = zjev.factory.open(gpa, tio, .{
+        .kind = if (cli.model_path != null) .onnx else .mock,
+        .mock_mode = mode,
+        .model_path = cli.model_path,
+        .num_sessions = cli.num_sessions,
+    }) catch |err| {
+        if (err == error.Unsupported) {
+            std.log.err("--model requires onnx support; rebuild with: zig build -Donnx=true", .{});
+        } else {
+            std.log.err("failed to open model '{s}': {s}", .{ cli.model_path orelse "mock", @errorName(err) });
+        }
+        return err;
+    };
     defer model.deinit(gpa);
 
     var profiles_storage: zjev.profile.Profiles = undefined;
@@ -85,7 +103,7 @@ pub fn main(init: std.process.Init) !void {
         .io = tio,
         .model = &model,
         .profiles = profiles_ptr,
-        .model_name = "mock",
+        .model_name = if (cli.model_path) |p| modelNameFromPath(p) else "mock",
         .scheduler = null,
     };
 
@@ -134,4 +152,12 @@ test "parseCli invalid port" {
 
 test "parseCli invalid sessions" {
     try std.testing.expectError(error.InvalidSessions, parseCli(&.{ "zjev-serve", "--sessions", "x" }));
+}
+
+test "modelNameFromPath" {
+    try std.testing.expectEqualStrings("zjev-v1", modelNameFromPath("/models/zjev-v1.onnx"));
+    try std.testing.expectEqualStrings("laya", modelNameFromPath("laya.onnx"));
+    try std.testing.expectEqualStrings("c.tar", modelNameFromPath("/a/b/c.tar.onnx"));
+    try std.testing.expectEqualStrings("noext", modelNameFromPath("/x/noext"));
+    try std.testing.expectEqualStrings("", modelNameFromPath(""));
 }

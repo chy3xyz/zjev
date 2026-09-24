@@ -28,7 +28,6 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{.{ .name = "zjev", .module = lib_module }},
     });
-    exe_module.addOptions("build_options", options);
     const exe = b.addExecutable(.{ .name = "zjev-serve", .root_module = exe_module });
     b.installArtifact(exe);
 
@@ -38,7 +37,6 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{.{ .name = "zjev", .module = lib_module }},
     });
-    main_test_module.addOptions("build_options", options);
 
     const test_module = b.createModule(.{
         .root_source_file = b.path("src/zjev.zig"),
