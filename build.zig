@@ -31,6 +31,13 @@ pub fn build(b: *std.Build) void {
     const exe = b.addExecutable(.{ .name = "zjev-serve", .root_module = exe_module });
     b.installArtifact(exe);
 
+    const main_test_module = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "zjev", .module = lib_module }},
+    });
+
     const test_module = b.createModule(.{
         .root_source_file = b.path("src/zjev.zig"),
         .target = target,
@@ -39,8 +46,11 @@ pub fn build(b: *std.Build) void {
     test_module.addOptions("build_options", options);
     const unit_tests = b.addTest(.{ .root_module = test_module });
     const run_unit = b.addRunArtifact(unit_tests);
+    const main_unit_tests = b.addTest(.{ .root_module = main_test_module });
+    const run_main_unit = b.addRunArtifact(main_unit_tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_unit.step);
+    test_step.dependOn(&run_main_unit.step);
 
     const conf_module = b.createModule(.{
         .root_source_file = b.path("tools/conformance.zig"),
