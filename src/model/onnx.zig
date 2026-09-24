@@ -67,7 +67,8 @@ fn createSession(ort: *const api.OrtApi, a: alloc.Allocator, env: *api.OrtEnv, p
     if (extensions_path) |ext| {
         const zext = try a.dupeSentinel(u8, ext, 0);
         defer a.free(zext);
-        checkStatus(ort, ort.RegisterCustomOpsLibrary(opts, zext.ptr, null), error.OrtInitFailed) catch |err| {
+        var lib_handle: ?*anyopaque = null;
+        checkStatus(ort, ort.RegisterCustomOpsLibrary(opts, zext.ptr, &lib_handle), error.OrtInitFailed) catch |err| {
             std.log.err("RegisterCustomOpsLibrary failed for '{s}': check version match with onnxruntime", .{ext});
             return err;
         };
@@ -194,10 +195,18 @@ pub fn openOnnx(a: alloc.Allocator, io: std.Io, model_path: []const u8, num_sess
     const ort = base.GetApi(api.ORT_API_VERSION) orelse return error.OrtInitFailed;
     const env = try createEnv(ort);
 
+    if (extensions_path) |ext| {
+        std.Io.Dir.cwd().access(io, ext, .{}) catch {
+            std.log.err("--ort-extensions '{s}' not found", .{ext});
+            return error.OrtInitFailed;
+        };
+    }
+
     var allocator: ?*api.OrtAllocator = null;
     try checkStatus(ort, ort.GetAllocatorWithDefaultOptions(&allocator), error.OrtInitFailed);
 
     const zpath = try a.dupeSentinel(u8, model_path, 0);
+    errdefer a.free(zpath);
     const count: usize = if (num_sessions == 0)
         @max(1, (std.Thread.getCpuCount() catch 4) / 2)
     else

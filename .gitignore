@@ -1,3 +1,6 @@
 .zig-cache/
 zig-out/
 .DS_Store
+export/laya/.venv/
+export/laya/lib/
+export/laya/out/
