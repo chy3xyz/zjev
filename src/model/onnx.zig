@@ -32,7 +32,6 @@ const Onnx = struct {
     idle: std.Io.Queue(*Session),
     idle_storage: []*Session,
     io: std.Io,
-    model_path: []u8,
     in_name: [*:0]const u8,
     out_name: [*:0]const u8,
 };
@@ -184,7 +183,6 @@ fn modelDeinit(ptr: *anyopaque, a: alloc.Allocator) void {
     self.ort.ReleaseEnv(self.env);
     a.free(self.sessions);
     a.free(self.idle_storage);
-    a.free(self.model_path);
     a.destroy(self);
 }
 
@@ -206,7 +204,7 @@ pub fn openOnnx(a: alloc.Allocator, io: std.Io, model_path: []const u8, num_sess
     try checkStatus(ort, ort.GetAllocatorWithDefaultOptions(&allocator), error.OrtInitFailed);
 
     const zpath = try a.dupeSentinel(u8, model_path, 0);
-    errdefer a.free(zpath);
+    defer a.free(zpath);
     const count: usize = if (num_sessions == 0)
         @max(1, (std.Thread.getCpuCount() catch 4) / 2)
     else
@@ -244,7 +242,6 @@ pub fn openOnnx(a: alloc.Allocator, io: std.Io, model_path: []const u8, num_sess
         .idle = std.Io.Queue(*Session).init(idle_storage),
         .idle_storage = idle_storage,
         .io = io,
-        .model_path = zpath,
         .in_name = "text",
         .out_name = "logits",
     };
