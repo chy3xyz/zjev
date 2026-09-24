@@ -4,3 +4,4 @@ zig-out/
 export/laya/.venv/
 export/laya/lib/
 export/laya/out/
+export/laya/.stage/
