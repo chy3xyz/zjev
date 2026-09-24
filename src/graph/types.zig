@@ -1,10 +1,12 @@
 const std = @import("std");
 const schema = @import("../core/schema.zig");
 const err = @import("../core/error.zig");
+const gate = @import("gate.zig");
 
 pub const Node = struct {
     id: []const u8,
     decision: []const u8,
+    gate: ?gate.Gate = null,
 };
 
 pub const Edge = struct {
