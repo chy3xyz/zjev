@@ -132,3 +132,19 @@ mock 读数的对比说明。
 - 冻结 encoder：质量上限受限；后续可解冻最后 N 层或 LoRA。
 - escalate 标签 = priority=high，与 urgency 标签相关（共线），
   trajectory 读数解释时需注意 noul 与 score 不独立。
+
+## 7. 执行偏差记录
+
+1. **encoder 权重零加载（严重，已修）**：M2 训练首跑发现 transformers 5.17
+   不自动剥离 checkpoint 的 `encoder.` 前缀——`AutoModel.from_pretrained`
+   的 LOAD REPORT 显示 0 个直接命中、全部 encoder 参数随机初始化。
+   此前所有 `laya.onnx`（含上一里程碑 e2e）的 encoder 均为随机权重，
+   plumbing 结论不受影响，但「真 Laya encoder」不成立。修复：
+   `export_laya.load_laya_encoder()` 手动 `load_file` + 剥前缀 +
+   `load_state_dict(strict=False)`，并用 `torch.equal` 断言与 checkpoint
+   逐位一致。训练随之在真 encoder 上重跑。
+2. **数据集列名与计划假设不同**（侦察步骤消化）：正文列是 `body`/`subject`
+   （非 `issue`），type 列是 `type`（非 `ticket_type`），tags 是 `tag_1..8`
+   标量列（非列表），priority 有 5 档（very_low/low/medium/high/critical），
+   escalate=high|critical，very_low→low、critical→high。已提交注明。
+
