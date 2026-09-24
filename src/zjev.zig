@@ -20,6 +20,7 @@ pub const api_json = @import("api/json.zig");
 pub const cache = @import("runtime/cache.zig");
 pub const scheduler = @import("runtime/scheduler.zig");
 pub const server = @import("api/server.zig");
+pub const temperature = @import("calib/temperature.zig");
 
 test {
     std.testing.refAllDecls(@This());
