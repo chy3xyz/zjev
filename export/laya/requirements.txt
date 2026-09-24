@@ -7,3 +7,4 @@ onnxruntime-extensions>=0.14
 huggingface_hub>=0.30
 numpy>=2.0
 safetensors>=0.5
+datasets
