@@ -58,12 +58,20 @@ fn createEnv(ort: *const api.OrtApi) Error!*api.OrtEnv {
     return env.?;
 }
 
-fn createSession(ort: *const api.OrtApi, env: *api.OrtEnv, path: [:0]const u8) Error!*api.OrtSession {
+fn createSession(ort: *const api.OrtApi, a: alloc.Allocator, env: *api.OrtEnv, path: [:0]const u8, extensions_path: ?[]const u8) Error!*api.OrtSession {
     var opts: ?*api.OrtSessionOptions = null;
     try checkStatus(ort, ort.CreateSessionOptions(&opts), error.SessionCreateFailed);
     defer ort.ReleaseSessionOptions(opts);
     try checkStatus(ort, ort.SetIntraOpNumThreads(opts, 1), error.SessionCreateFailed);
     try checkStatus(ort, ort.SetSessionLogSeverityLevel(opts, 3), error.SessionCreateFailed);
+    if (extensions_path) |ext| {
+        const zext = try a.dupeSentinel(u8, ext, 0);
+        defer a.free(zext);
+        checkStatus(ort, ort.RegisterCustomOpsLibrary(opts, zext.ptr, null), error.OrtInitFailed) catch |err| {
+            std.log.err("RegisterCustomOpsLibrary failed for '{s}': check version match with onnxruntime", .{ext});
+            return err;
+        };
+    }
     var sess: ?*api.OrtSession = null;
     try checkStatus(ort, ort.CreateSession(env, path, opts, &sess), error.SessionCreateFailed);
     return sess.?;
@@ -179,7 +187,7 @@ fn modelDeinit(ptr: *anyopaque, a: alloc.Allocator) void {
     a.destroy(self);
 }
 
-pub fn openOnnx(a: alloc.Allocator, io: std.Io, model_path: []const u8, num_sessions: u16) Error!factory.Model {
+pub fn openOnnx(a: alloc.Allocator, io: std.Io, model_path: []const u8, num_sessions: u16, extensions_path: ?[]const u8) Error!factory.Model {
     if (!build_options.onnx) return error.Unsupported;
 
     const base = api.OrtGetApiBase();
@@ -200,7 +208,7 @@ pub fn openOnnx(a: alloc.Allocator, io: std.Io, model_path: []const u8, num_sess
 
     var total_logits: usize = 0;
     for (sessions, 0..) |*sp, i| {
-        const handle = try createSession(ort, env, zpath);
+        const handle = try createSession(ort, a, env, zpath, extensions_path);
         const n = try outputLogitCount(ort, handle);
         if (i == 0) {
             total_logits = n;

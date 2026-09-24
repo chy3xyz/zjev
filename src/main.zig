@@ -10,6 +10,7 @@ pub const Cli = struct {
     cache_enabled: bool = false,
     model_path: ?[]const u8 = null,
     num_sessions: u16 = 0,
+    ort_extensions: ?[]const u8 = null,
 };
 
 pub fn parseCli(args: []const []const u8) error{ InvalidPort, InvalidSessions }!Cli {
@@ -35,6 +36,9 @@ pub fn parseCli(args: []const []const u8) error{ InvalidPort, InvalidSessions }!
         } else if (std.mem.eql(u8, arg, "--sessions") and i + 1 < args.len) {
             i += 1;
             cli.num_sessions = std.fmt.parseInt(u16, args[i], 10) catch return error.InvalidSessions;
+        } else if (std.mem.eql(u8, arg, "--ort-extensions") and i + 1 < args.len) {
+            i += 1;
+            cli.ort_extensions = args[i];
         } else if (std.mem.eql(u8, arg, "--scheduler")) {
             cli.use_scheduler = true;
         } else if (std.mem.eql(u8, arg, "--cache")) {
@@ -77,6 +81,7 @@ pub fn main(init: std.process.Init) !void {
         .mock_mode = mode,
         .model_path = cli.model_path,
         .num_sessions = cli.num_sessions,
+        .ort_extensions = cli.ort_extensions,
     }) catch |err| {
         if (err == error.Unsupported) {
             std.log.err("--model requires onnx support; rebuild with: zig build -Donnx=true", .{});
@@ -160,4 +165,11 @@ test "modelNameFromPath" {
     try std.testing.expectEqualStrings("c.tar", modelNameFromPath("/a/b/c.tar.onnx"));
     try std.testing.expectEqualStrings("noext", modelNameFromPath("/x/noext"));
     try std.testing.expectEqualStrings("", modelNameFromPath(""));
+}
+
+test "parseCli ort extensions" {
+    const cli = try parseCli(&.{ "zjev-serve", "--ort-extensions", "/tmp/liboe.dylib" });
+    try std.testing.expectEqualStrings("/tmp/liboe.dylib", cli.ort_extensions.?);
+    const d = try parseCli(&.{"zjev-serve"});
+    try std.testing.expectEqual(@as(?[]const u8, null), d.ort_extensions);
 }
