@@ -26,6 +26,7 @@ pub const graph = @import("graph/types.zig");
 pub const condition = @import("graph/condition.zig");
 pub const gate = @import("graph/gate.zig");
 pub const trajectory = @import("graph/trajectory.zig");
+pub const executor = @import("graph/executor.zig");
 
 test {
     std.testing.refAllDecls(@This());

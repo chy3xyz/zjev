@@ -2,6 +2,7 @@ const std = @import("std");
 const schema = @import("../core/schema.zig");
 const err = @import("../core/error.zig");
 const gate = @import("gate.zig");
+const condition = @import("condition.zig");
 
 pub const Node = struct {
     id: []const u8,
@@ -12,7 +13,7 @@ pub const Node = struct {
 pub const Edge = struct {
     from: []const u8,
     to: []const u8,
-    when: []const u8,
+    when: condition.Cond,
 };
 
 pub const Graph = struct {
@@ -65,7 +66,7 @@ test "validate rejects one decision referenced twice" {
 test "validate rejects edge to unknown node" {
     const g: Graph = .{
         .nodes = &.{.{ .id = "n1", .decision = "c1" }},
-        .edges = &.{.{ .from = "n1", .to = "ghost", .when = "c1 == a" }},
+        .edges = &.{.{ .from = "n1", .to = "ghost", .when = undefined }},
     };
     const schemas = [_]schema.DecisionSchema{
         .{ .choice = .{ .id = "c1", .options = &.{ "a", "b" }, .abstain = false } },
@@ -79,8 +80,8 @@ test "validate rejects cycle" {
         .{ .id = "n2", .decision = "c2" },
     };
     const edges = [_]Edge{
-        .{ .from = "n1", .to = "n2", .when = "c1 == a" },
-        .{ .from = "n2", .to = "n1", .when = "c2 == a" },
+        .{ .from = "n1", .to = "n2", .when = undefined },
+        .{ .from = "n2", .to = "n1", .when = undefined },
     };
     const schemas = [_]schema.DecisionSchema{
         .{ .choice = .{ .id = "c1", .options = &.{"a"}, .abstain = false } },
@@ -93,7 +94,7 @@ test "validate rejects cycle" {
 test "validate rejects self loop" {
     const g: Graph = .{
         .nodes = &.{.{ .id = "n1", .decision = "c1" }},
-        .edges = &.{.{ .from = "n1", .to = "n1", .when = "c1 == a" }},
+        .edges = &.{.{ .from = "n1", .to = "n1", .when = undefined }},
     };
     const schemas = [_]schema.DecisionSchema{
         .{ .choice = .{ .id = "c1", .options = &.{"a"}, .abstain = false } },
