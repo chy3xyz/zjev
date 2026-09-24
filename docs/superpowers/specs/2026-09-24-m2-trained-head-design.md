@@ -147,4 +147,8 @@ mock 读数的对比说明。
    （非 `issue`），type 列是 `type`（非 `ticket_type`），tags 是 `tag_1..8`
    标量列（非列表），priority 有 5 档（very_low/low/medium/high/critical），
    escalate=high|critical，very_low→low、critical→high。已提交注明。
+3. **MPS 训练吞吐**：ModernBERT-large 冻结前向在 MPS 上 ~1.6s/batch(32×128)，
+   单 epoch ≈23 min（706 批）+ eval ≈3 min；epoch 日志只在 epoch 末打印，
+   中途 `sample` 显示主线程阻塞在 `.item()` 的 `waitUntilCompleted` 属正常
+   （CPU 等 GPU）。20 epoch + patience 3 最坏数小时，训练挂无超时后台任务。
 
