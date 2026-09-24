@@ -71,3 +71,92 @@ test "sigmoid endpoints" {
     try std.testing.expect(sigmoid(10) > 0.999);
     try std.testing.expect(sigmoid(-10) < 0.001);
 }
+
+const alloc = @import("../core/alloc.zig");
+
+test "selective risk four coverage tiers" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const conf = [_]f32{ 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.05 };
+    const ok = [_]bool{ true, true, true, true, false, true, false, false, true, false };
+    const pts = try selectiveRisk(a, &conf, &ok, &default_coverages);
+    try std.testing.expectEqual(@as(usize, 4), pts.len);
+    try std.testing.expectEqual(@as(usize, 5), pts[0].keep);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.2), pts[0].risk, 1e-9);
+    try std.testing.expectEqual(@as(f32, 0.5), pts[0].threshold);
+    try std.testing.expectApproxEqAbs(@as(f64, 2.0 / 7.0), pts[1].risk, 1e-9);
+    try std.testing.expectEqual(@as(f32, 0.3), pts[1].threshold);
+    try std.testing.expectApproxEqAbs(@as(f64, 1.0 / 3.0), pts[2].risk, 1e-9);
+    try std.testing.expectEqual(@as(f32, 0.1), pts[2].threshold);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.4), pts[3].risk, 1e-9);
+    try std.testing.expectEqual(@as(f32, 0.05), pts[3].threshold);
+}
+
+test "selective risk tie breaks by original index" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const conf = [_]f32{ 0.5, 0.5, 0.9 };
+    const ok = [_]bool{ true, false, true };
+    const cov = [_]f64{0.5};
+    const pts = try selectiveRisk(a, &conf, &ok, &cov);
+    try std.testing.expectEqual(@as(usize, 2), pts[0].keep);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), pts[0].risk, 1e-9);
+    try std.testing.expectEqual(@as(f32, 0.5), pts[0].threshold);
+}
+
+test "selective risk single sample" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const conf = [_]f32{0.7};
+    const ok = [_]bool{false};
+    const pts = try selectiveRisk(a, &conf, &ok, &default_coverages);
+    try std.testing.expectEqual(@as(usize, 1), pts[0].keep);
+    try std.testing.expectApproxEqAbs(@as(f64, 1.0), pts[0].risk, 1e-9);
+    try std.testing.expectEqual(@as(f32, 0.7), pts[0].threshold);
+}
+
+pub const RiskPoint = struct {
+    coverage: f64,
+    keep: usize,
+    n: usize,
+    risk: f64,
+    threshold: f32,
+};
+
+pub const default_coverages = [_]f64{ 0.5, 0.7, 0.9, 0.95 };
+
+pub fn selectiveRisk(a: alloc.Allocator, conf: []const f32, ok: []const bool, coverages: []const f64) error{OutOfMemory}![]RiskPoint {
+    std.debug.assert(conf.len == ok.len);
+    const n = conf.len;
+    var idx: std.ArrayList(usize) = .empty;
+    defer idx.deinit(a);
+    for (0..n) |i| try idx.append(a, i);
+    const Ctx = struct { conf: []const f32 };
+    const ctx: Ctx = .{ .conf = conf };
+    std.mem.sort(usize, idx.items, ctx, struct {
+        fn less(c: Ctx, x: usize, y: usize) bool {
+            if (c.conf[x] != c.conf[y]) return c.conf[x] > c.conf[y];
+            return x < y;
+        }
+    }.less);
+    const pts = try a.alloc(RiskPoint, coverages.len);
+    for (coverages, 0..) |c, i| {
+        const k: usize = if (n == 0) 0 else @intFromFloat(@ceil(c * @as(f64, @floatFromInt(n))));
+        const kk = @min(k, n);
+        var correct: usize = 0;
+        for (idx.items[0..kk]) |j| {
+            if (ok[j]) correct += 1;
+        }
+        pts[i] = .{
+            .coverage = c,
+            .keep = kk,
+            .n = n,
+            .risk = if (kk == 0) 0 else 1.0 - @as(f64, @floatFromInt(correct)) / @as(f64, @floatFromInt(kk)),
+            .threshold = if (kk == 0) 0 else conf[idx.items[kk - 1]],
+        };
+    }
+    return pts;
+}

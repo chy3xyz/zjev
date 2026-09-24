@@ -91,12 +91,35 @@ pub fn main(init: std.process.Init) !void {
     for (groups.items) |*g| {
         if (g.zs.items.len == 0) continue;
         const t = zjev.temperature.fit(g.zs.items, g.labels.items);
+        var cal_conf: std.ArrayList(f32) = .empty;
+        var cal_ok: std.ArrayList(bool) = .empty;
+        var probs_rows: std.ArrayList([]const f32) = .empty;
+        var label_idx: std.ArrayList(usize) = .empty;
+        for (g.zs.items, g.labels.items) |z, li| {
+            const row = try a.alloc(f32, z.len);
+            zjev.softmax.apply(z, t, row) catch continue;
+            try probs_rows.append(a, row);
+            try label_idx.append(a, li);
+            var m: f32 = 0;
+            for (row) |p| m = @max(m, p);
+            try cal_conf.append(a, m);
+            try cal_ok.append(a, zjev.stats.argmax(row) == li);
+        }
+        const ece_r = zjev.ece.compute(cal_conf.items, cal_ok.items, 15);
+        const brier_v = zjev.brier.score(probs_rows.items, label_idx.items);
+        const sr = try zjev.stats.selectiveRisk(a, cal_conf.items, cal_ok.items, &zjev.stats.default_coverages);
         const profile = zjev.profile.Profile{
             .model = model_name,
             .task = @tagName(g.task),
             .num_options = g.num,
             .domain = domain,
             .temperature = t,
+            .ece = @floatCast(ece_r.ece),
+            .brier = @floatCast(brier_v),
+            .@"selective_risk@0.5" = @floatCast(sr[0].risk),
+            .@"selective_risk@0.7" = @floatCast(sr[1].risk),
+            .@"selective_risk@0.9" = @floatCast(sr[2].risk),
+            .@"selective_risk@0.95" = @floatCast(sr[3].risk),
             .fitted_at = "zjev-fit",
         };
         const json_text = try std.json.Stringify.valueAlloc(a, profile, .{});

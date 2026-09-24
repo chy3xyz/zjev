@@ -27,10 +27,12 @@ CLI 选项：`--bind` `--port` `--mock-mode uniform|peaked|sequence` `--profiles
 ## 工具
 
 ```bash
-zig-out/bin/zjev-fit --dataset datasets/calibration_sample.jsonl   # 拟合 temperature，写 model/calibration/*.json
-zig-out/bin/zjev-bench --dataset <jsonl> [--profiles-dir model/calibration]  # 输出 accuracy/brier/ece/mce 指标 JSON
-zig-out/bin/zjev-traj --dataset datasets/traj_sample.jsonl --mock-mode sequence  # 轨迹级校准报告（node vs trajectory 并排）
+zig-out/bin/zjev-fit --dataset datasets/calibration_sample.jsonl   # 拟合 temperature，写 model/calibration/*.json（含 ece/brier/selective_risk@0.5/0.7/0.9/0.95）
+zig-out/bin/zjev-bench --dataset <jsonl> [--profiles-dir model/calibration]  # 输出 accuracy/brier/ece/mce + selective_risk 四档
+zig-out/bin/zjev-traj --dataset datasets/traj_sample.jsonl --mock-mode sequence  # 轨迹级校准报告（node vs trajectory 并排 + selective_risk）
 ```
+
+selective risk 口径：按置信度降序（并列按下标）取前 ⌈coverage·n⌉ 条，risk = 保留子集错误率，threshold = 该档最小保留置信度（可直接作 `Gate.threshold` 调参参考）。
 
 ## Decision Graph（V0.2）
 
