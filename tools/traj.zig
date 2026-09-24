@@ -143,11 +143,19 @@ pub fn main(init: std.process.Init) !void {
 
     const tb = zjev.report.trajectoryBrier(p_list.items, y_list.items);
     const te = zjev.ece.compute(p_list.items, y_list.items, 15);
+    const sr = zjev.stats.selectiveRisk(a, p_list.items, y_list.items, &zjev.stats.default_coverages) catch null;
     var out: std.Io.Writer.Allocating = .init(a);
     defer out.deinit();
     const w = &out.writer;
     const acc_f: f64 = if (total > 0) @as(f64, @floatFromInt(correct)) / @as(f64, @floatFromInt(total)) else 0;
-    try w.print("{{\"n\":{d},\"trajectory_accuracy\":{d:.6},\"traj_brier\":{d:.6},\"traj_ece\":{d:.6},\"traj_mce\":{d:.6},\"skipped_records\":{d},\"by_node\":[", .{ total, acc_f, tb, te.ece, te.mce, skipped });
+    try w.print("{{\"n\":{d},\"trajectory_accuracy\":{d:.6},\"traj_brier\":{d:.6},\"traj_ece\":{d:.6},\"traj_mce\":{d:.6},\"skipped_records\":{d},\"selective_risk\":[", .{ total, acc_f, tb, te.ece, te.mce, skipped });
+    if (sr) |pts| {
+        for (pts, 0..) |pt, pi| {
+            if (pi > 0) try w.writeByte(',');
+            try w.print("{{\"coverage\":{d:.2},\"keep\":{d},\"n\":{d},\"risk\":{d:.6},\"threshold\":{d:.6}}}", .{ pt.coverage, pt.keep, pt.n, pt.risk, pt.threshold });
+        }
+    }
+    try w.writeAll("],\"by_node\":[");
     for (node_accs.items, 0..) |*ac, idx| {
         if (idx > 0) try w.writeByte(',');
         const e = zjev.ece.compute(ac.conf.items, ac.ok.items, 15);
