@@ -38,7 +38,8 @@ selective risk 口径：按置信度降序（并列按下标）取前 ⌈coverag
 
 图执行端点 `POST /v1/execute`：请求体 = DecisionRequest + `graph`（nodes/edges/可选 gate），
 条件表达式（如 `risk_level == high and risk.confidence > 0.5`）在请求解析期编译为 AST
-并做静态类型检查，运行期沿 DAG frontier 批量执行（共享一次 encoder 前向），
+并做静态类型检查；运行期一次性前向算全图节点，再沿 DAG frontier 模拟激活波
+（整图共享一次 encoder 前向，bundled ONNX 头同样支持多 wave 条件图），
 响应为 `trajectory[] + skipped[] + path_prob`。节点可挂策略门 `Gate{threshold, action_above, action_below, action_abstain}`。
 
 `zjev-traj` 度量 quest1.md §12 的命题（单跳 calibrated ⇏ 轨迹 calibrated）：
@@ -77,9 +78,8 @@ zig build -Donnx=true -Donnx_lib_dir=$PWD/export/laya/lib
 库配对注意：`export/laya/lib/` 是版本自洽的一对（onnxruntime 1.30 取自 pip 轮，
 libortextensions 0.15.2 取自 NuGet `Microsoft.ML.OnnxRuntime.Extensions`，均无
 python 依赖）。brew 的 onnxruntime 1.30 在 `RegisterCustomOpsLibrary` 路径上会段错误，
-勿混用。图含条件边（多 wave）时 ONNX 头暂不支持——executor 按 frontier 分批、每批
-Σ logitCount 需等于图长；平图（edges 为空）已验证。这是已知限制，见
-`docs/superpowers/specs/2026-09-24-laya-onnx-export-design.md`。
+勿混用。多 wave 条件图同样支持（executor 全量预取：单次前向算全图节点，再模拟
+激活波），见 `docs/superpowers/specs/2026-09-24-executor-prefetch-design.md`。
 
 
 ## 目录
