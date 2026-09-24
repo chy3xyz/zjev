@@ -11,6 +11,10 @@ pub const Profile = struct {
     ece: ?f32 = null,
     brier: ?f32 = null,
     nll: ?f32 = null,
+    @"selective_risk@0.5": ?f32 = null,
+    @"selective_risk@0.7": ?f32 = null,
+    @"selective_risk@0.9": ?f32 = null,
+    @"selective_risk@0.95": ?f32 = null,
     fitted_at: ?[]const u8 = null,
 };
 
@@ -93,4 +97,23 @@ test "lookup per option count" {
     const three: schema.DecisionSchema = .{ .choice = .{ .id = "c", .options = &.{ "a", "b", "c" } } };
     try std.testing.expectEqual(@as(?f32, 2.0), ps.lookup("m", two, "general"));
     try std.testing.expectEqual(@as(?f32, null), ps.lookup("m", three, "general"));
+}
+
+test "profile serializes selective risk keys" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const p: Profile = .{
+        .model = "m",
+        .task = "choice",
+        .num_options = 2,
+        .temperature = 1.2,
+        .ece = 0.1,
+        .@"selective_risk@0.9" = 0.05,
+    };
+    const s = try std.json.Stringify.valueAlloc(a, p, .{});
+    try std.testing.expect(std.mem.indexOf(u8, s, "\"selective_risk@0.9\":0.05") != null);
+    const back = try std.json.parseFromSlice(Profile, a, s, .{});
+    try std.testing.expectEqual(@as(?f32, 0.05), back.value.@"selective_risk@0.9");
+    try std.testing.expectEqual(@as(?f32, null), back.value.@"selective_risk@0.5");
 }
