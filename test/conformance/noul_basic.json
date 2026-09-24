@@ -1,0 +1,6 @@
+{
+  "name": "noul_basic",
+  "mode": "peaked",
+  "request": {"state": {"id": "fix-2", "text": "x"}, "decisions": [{"id": "n", "type": "noul", "abstain": false}]},
+  "expect": {"first": {"type": "noul", "has_abstention": false}}
+}

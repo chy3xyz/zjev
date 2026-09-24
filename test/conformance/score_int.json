@@ -1,0 +1,6 @@
+{
+  "name": "score_int",
+  "mode": "sequence",
+  "request": {"state": {"id": "fix-3", "text": "x"}, "decisions": [{"id": "s", "type": "score", "scale": {"min": 1, "max": 5}}]},
+  "expect": {"first": {"type": "score", "has_variance": true, "probs_sum": 1.0}}
+}

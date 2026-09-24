@@ -1,0 +1,6 @@
+{
+  "name": "bad_reserved",
+  "mode": "peaked",
+  "request": {"state": {"text": "x"}, "decisions": [{"id": "c", "type": "choice", "options": ["a", "__abstain__"]}]},
+  "expect_error": "invalid_request"
+}

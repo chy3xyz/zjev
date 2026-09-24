@@ -74,6 +74,10 @@ pub fn parseRequest(a: alloc.Allocator, body: []const u8) Error!Request {
     return convertRaw(a, raw);
 }
 
+pub fn fromRaw(a: alloc.Allocator, raw: RawRequest) Error!Request {
+    return convertRaw(a, raw);
+}
+
 pub fn parseBatch(a: alloc.Allocator, body: []const u8) Error![]Request {
     const RawBatch = struct { requests: []RawRequest };
     const raw = std.json.parseFromSliceLeaky(RawBatch, a, body, .{}) catch return error.InvalidJson;

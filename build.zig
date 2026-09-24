@@ -41,4 +41,15 @@ pub fn build(b: *std.Build) void {
     const run_unit = b.addRunArtifact(unit_tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_unit.step);
+
+    const conf_module = b.createModule(.{
+        .root_source_file = b.path("tools/conformance.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "zjev", .module = lib_module }},
+    });
+    const conf_exe = b.addExecutable(.{ .name = "zjev-conformance", .root_module = conf_module });
+    const run_conf = b.addRunArtifact(conf_exe);
+    const conf_step = b.step("test-conformance", "Run conformance fixtures");
+    conf_step.dependOn(&run_conf.step);
 }

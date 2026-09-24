@@ -1,0 +1,6 @@
+{
+  "name": "rank_basic",
+  "mode": "peaked",
+  "request": {"state": {"id": "fix-4", "text": "x"}, "decisions": [{"id": "r", "type": "rank", "items": ["x", "y", "z"]}]},
+  "expect": {"first": {"type": "rank", "rank_len": 3}}
+}

@@ -1,0 +1,6 @@
+{
+  "name": "choice_abstain",
+  "mode": "sequence",
+  "request": {"state": {"id": "fix-1", "text": "x"}, "decisions": [{"id": "c", "type": "choice", "options": ["a", "b"], "abstain": true}]},
+  "expect": {"first": {"type": "choice", "value_in": ["a", "b", "__abstain__"], "has_abstention": true, "probs_sum": 1.0}}
+}
