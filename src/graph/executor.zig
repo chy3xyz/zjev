@@ -42,6 +42,19 @@ pub fn execute(
     try graph_mod.validate(g, schemas);
 
     const n = g.nodes.len;
+
+    // 全量预取：按图节点主序单次前向。bundled 头契约要求一次 decide 消费
+    // 全图 schema（图宽 = Σ logitCount）；validate 保证 node→decision 一一对应，
+    // 故 run_schemas[i] 对应 g.nodes[i]，结果按下标直取。
+    var run_schemas: std.ArrayList(schema.DecisionSchema) = .empty;
+    var run_temps: std.ArrayList(f32) = .empty;
+    for (g.nodes) |nd| {
+        const si = schemaById(schemas, nd.decision).?;
+        try run_schemas.append(a, schemas[si]);
+        try run_temps.append(a, if (temps) |ts| ts[si] else 1.0);
+    }
+    const outcome = try engine.run(a, model, s, run_schemas.items, run_temps.items);
+
     const activated = try a.alloc(bool, n);
     @memset(activated, false);
     const executed = try a.alloc(bool, n);
@@ -67,18 +80,9 @@ pub fn execute(
     while (frontier.items.len > 0) {
         std.mem.sort(usize, frontier.items, g.nodes, byId);
 
-        var batch_schemas: std.ArrayList(schema.DecisionSchema) = .empty;
-        var batch_temps: std.ArrayList(f32) = .empty;
         for (frontier.items) |ni| {
-            const si = schemaById(schemas, g.nodes[ni].decision).?;
-            try batch_schemas.append(a, schemas[si]);
-            try batch_temps.append(a, if (temps) |ts| ts[si] else 1.0);
-        }
-
-        const outcome = try engine.run(a, model, s, batch_schemas.items, batch_temps.items);
-
-        for (frontier.items, outcome.results, batch_schemas.items) |ni, r, sc| {
             executed[ni] = true;
+            const r = outcome.results[ni];
             var step: trajectory.Step = .{
                 .node_id = g.nodes[ni].id,
                 .decision_id = r.id,
@@ -87,7 +91,7 @@ pub fn execute(
             if (g.nodes[ni].gate) |gt| step.action = gt.apply(r);
             try steps.append(a, step);
             try done_results.append(a, r);
-            path_prob *= try trajectory.massFor(a, r, sc);
+            path_prob *= try trajectory.massFor(a, r, run_schemas.items[ni]);
 
             for (g.edges) |e| {
                 if (!std.mem.eql(u8, e.from, g.nodes[ni].id)) continue;
@@ -248,5 +252,105 @@ test "execute OR activation via two incoming edges" {
     const out = try execIn(arena.allocator(), g, &schemas);
     try std.testing.expectEqual(@as(usize, 3), out.steps.len);
     try std.testing.expectEqualStrings("join", out.steps[2].node_id);
+}
+
+const model_encoder = @import("../model/encoder.zig");
+const model_head = @import("../model/head.zig");
+const model_logits = @import("../model/logits.zig");
+
+const Count = struct {
+    calls: usize = 0,
+    last_schema_count: usize = 0,
+};
+
+fn countingDecide(
+    ptr: *anyopaque,
+    a: alloc.Allocator,
+    hidden: *model_encoder.HiddenState,
+    schemas: []const schema.DecisionSchema,
+) model_head.Error![]f32 {
+    _ = hidden;
+    const self: *Count = @ptrCast(@alignCast(ptr));
+    self.calls += 1;
+    self.last_schema_count = schemas.len;
+    var total: usize = 0;
+    for (schemas) |sc| total += model_logits.logitCount(sc);
+    const buf = try a.alloc(f32, total);
+    @memset(buf, 0);
+    var off: usize = 0;
+    for (schemas) |sc| {
+        const n = model_logits.logitCount(sc);
+        buf[off] = 4.0; // 每个 schema 峰在下标 0 → choice 取首选项 / noul=true
+        off += n;
+    }
+    return buf;
+}
+
+const counting_vtable: model_head.VTable = .{ .decide = countingDecide };
+
+test "execute prefetches whole graph in one bundled call" {
+    var arena = newArena();
+    defer arena.deinit();
+    const a = arena.allocator();
+    var count: Count = .{};
+    var m = try factory.mockModel(.sequence, a);
+    defer m.deinit(a);
+    m.heads.set(.noul, .{ .ptr = &count, .vtable = &counting_vtable, .bundled = true });
+
+    const nodes = [_]graph_mod.Node{
+        .{ .id = "r", .decision = "c1" },
+        .{ .id = "hit", .decision = "c2" },
+        .{ .id = "miss", .decision = "c2b" },
+    };
+    var schemas: [4]schema.DecisionSchema = undefined;
+    schemas[0] = two_choice_schemas[0];
+    schemas[1] = two_choice_schemas[1];
+    schemas[2] = .{ .choice = .{ .id = "c2b", .options = &.{ "u", "v" }, .abstain = false } };
+    schemas[3] = .{ .noul = .{ .id = "unused-noul", .abstain = false } }; // 不被图引用
+    const edges = [_]graph_mod.Edge{
+        .{ .from = "r", .to = "hit", .when = cmpEq("c1", "a") },
+        .{ .from = "r", .to = "miss", .when = cmpEq("c1", "b") },
+    };
+    const g: graph_mod.Graph = .{ .nodes = &nodes, .edges = &edges };
+    const s: state.State = .{ .text = "x" };
+
+    const out = try execute(a, &m, &s, &schemas, g, null);
+    try std.testing.expectEqual(@as(usize, 1), count.calls);
+    try std.testing.expectEqual(@as(usize, 3), count.last_schema_count);
+    try std.testing.expectEqual(@as(usize, 2), out.steps.len);
+    try std.testing.expectEqualStrings("hit", out.steps[1].node_id);
+    try std.testing.expectEqual(@as(usize, 1), out.skipped.len);
+    try std.testing.expectEqualStrings("miss", out.skipped[0]);
+}
+
+test "execute skips request schemas not referenced by graph" {
+    // 非 bundled：运行集 = 图节点引用的 schema；额外 schema 不进入任何 head 调用。
+    var arena = newArena();
+    defer arena.deinit();
+    const a = arena.allocator();
+    var count: Count = .{};
+    var m = try factory.mockModel(.sequence, a);
+    defer m.deinit(a);
+    m.heads.set(.choice, .{ .ptr = &count, .vtable = &counting_vtable, .bundled = false });
+
+    const nodes = [_]graph_mod.Node{
+        .{ .id = "n1", .decision = "c1" },
+        .{ .id = "n2", .decision = "c2" },
+    };
+    var schemas: [3]schema.DecisionSchema = undefined;
+    schemas[0] = two_choice_schemas[0];
+    schemas[1] = two_choice_schemas[1];
+    schemas[2] = .{ .noul = .{ .id = "unused-noul", .abstain = false } };
+    const edges = [_]graph_mod.Edge{
+        .{ .from = "n1", .to = "n2", .when = cmpEq("c1", "a") },
+    };
+    const g: graph_mod.Graph = .{ .nodes = &nodes, .edges = &edges };
+    const s: state.State = .{ .text = "x" };
+
+    const out = try execute(a, &m, &s, &schemas, g, null);
+    // 非 bundled 路径按 type 分组调用 choice 头：全量传入 2 个图引用 schema，一次调用
+    try std.testing.expectEqual(@as(usize, 1), count.calls);
+    try std.testing.expectEqual(@as(usize, 2), count.last_schema_count);
+    try std.testing.expectEqual(@as(usize, 2), out.steps.len);
 }
 
