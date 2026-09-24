@@ -16,6 +16,9 @@ pub fn main(init: std.process.Init) !void {
     var model_name: []const u8 = "mock";
     var domain: []const u8 = "general";
     var mock_mode: []const u8 = "peaked";
+    var model_path: ?[]const u8 = null;
+    var num_sessions: u16 = 0;
+    var ort_extensions: ?[]const u8 = null;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
@@ -34,10 +37,19 @@ pub fn main(init: std.process.Init) !void {
         } else if (std.mem.eql(u8, arg, "--mock-mode") and i + 1 < args.len) {
             i += 1;
             mock_mode = args[i];
+        } else if (std.mem.eql(u8, arg, "--model") and i + 1 < args.len) {
+            i += 1;
+            model_path = args[i];
+        } else if (std.mem.eql(u8, arg, "--sessions") and i + 1 < args.len) {
+            i += 1;
+            num_sessions = try std.fmt.parseInt(u16, args[i], 10);
+        } else if (std.mem.eql(u8, arg, "--ort-extensions") and i + 1 < args.len) {
+            i += 1;
+            ort_extensions = args[i];
         }
     }
     const path = dataset_path orelse {
-        std.debug.print("usage: zjev-traj --dataset <jsonl> [--mock-mode m] [--profiles-dir d]\n", .{});
+        std.debug.print("usage: zjev-traj --dataset <jsonl> [--mock-mode m] [--profiles-dir d] [--model p.onnx [--sessions n] [--ort-extensions lib]]\n", .{});
         std.process.exit(2);
     };
 
@@ -58,7 +70,22 @@ pub fn main(init: std.process.Init) !void {
         .sequence
     else
         .peaked;
-    var model = try zjev.mock.model(mode, a);
+    var model = if (model_path) |mp| blk: {
+        const m = zjev.factory.open(a, io, .{
+            .kind = .onnx,
+            .model_path = mp,
+            .num_sessions = num_sessions,
+            .ort_extensions = ort_extensions,
+        }) catch |e| {
+            if (e == error.Unsupported) {
+                std.debug.print("--model requires an onnx build: zig build -Donnx=true -Donnx_lib_dir=<dir>\n", .{});
+                std.process.exit(2);
+            }
+            std.debug.print("failed to open model '{s}': {s}\n", .{ mp, @errorName(e) });
+            std.process.exit(1);
+        };
+        break :blk m;
+    } else try zjev.mock.model(mode, a);
     defer model.deinit(a);
 
     var profiles: ?zjev.profile.Profiles = null;
