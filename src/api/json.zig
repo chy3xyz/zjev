@@ -9,6 +9,7 @@ pub const Error = error{
     MissingField,
     Unsupported,
     BadAbstain,
+    InvalidGraph,
     OutOfMemory,
 };
 
@@ -281,4 +282,219 @@ test "write response shape" {
     try std.testing.expect(std.mem.indexOf(u8, s, "\"value\":\"medium\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, s, "\"__abstain__\":0.060000") != null);
     try std.testing.expect(std.mem.indexOf(u8, s, "\"calibration\":\"matched\"") != null);
+}
+
+// ---- /v1/execute（Task 7）----
+
+const condition = @import("../graph/condition.zig");
+const gate = @import("../graph/gate.zig");
+const graph_mod = @import("../graph/types.zig");
+const executor = @import("../graph/executor.zig");
+
+pub const RawGate = struct {
+    threshold: f32,
+    action_above: []const u8,
+    action_below: []const u8,
+    action_abstain: []const u8,
+};
+
+pub const RawNode = struct {
+    id: []const u8,
+    decision: []const u8,
+    gate: ?RawGate = null,
+};
+
+pub const RawEdge = struct {
+    from: []const u8,
+    to: []const u8,
+    when: []const u8,
+};
+
+pub const RawGraph = struct {
+    nodes: []RawNode,
+    edges: []RawEdge,
+};
+
+pub const RawExecuteRequest = struct {
+    state: RawState,
+    decisions: []RawDecision,
+    domain: ?[]const u8 = null,
+    policy: ?std.json.Value = null,
+    graph: RawGraph,
+};
+
+pub const ExecuteRequest = struct {
+    state: state.State,
+    schemas: []schema.DecisionSchema,
+    domain: []const u8 = "general",
+    graph: graph_mod.Graph,
+};
+
+fn buildGraph(a: alloc.Allocator, raw: RawGraph, schemas: []const schema.DecisionSchema) Error!graph_mod.Graph {
+    const nodes = try a.alloc(graph_mod.Node, raw.nodes.len);
+    for (raw.nodes, 0..) |rn, i| {
+        var g: ?gate.Gate = null;
+        if (rn.gate) |rg| {
+            if (!gate.validateThreshold(rg.threshold)) return error.InvalidGraph;
+            g = .{
+                .threshold = rg.threshold,
+                .action_above = rg.action_above,
+                .action_below = rg.action_below,
+                .action_abstain = rg.action_abstain,
+            };
+        }
+        nodes[i] = .{ .id = rn.id, .decision = rn.decision, .gate = g };
+    }
+    const edges = try a.alloc(graph_mod.Edge, raw.edges.len);
+    for (raw.edges, 0..) |re, i| {
+        const cond = condition.parse(a, re.when, schemas) catch |e| switch (e) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.InvalidGraph,
+        };
+        edges[i] = .{ .from = re.from, .to = re.to, .when = cond };
+    }
+    const g: graph_mod.Graph = .{ .nodes = nodes, .edges = edges };
+    graph_mod.validate(g, schemas) catch |e| switch (e) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return error.InvalidGraph,
+    };
+    return g;
+}
+
+pub fn fromRawExecute(a: alloc.Allocator, raw: RawExecuteRequest) Error!ExecuteRequest {
+    if (raw.policy != null) return error.Unsupported;
+    const schemas = try a.alloc(schema.DecisionSchema, raw.decisions.len);
+    for (raw.decisions, 0..) |d, i| {
+        schemas[i] = try convert(a, d);
+    }
+    return .{
+        .state = .{
+            .id = raw.state.id,
+            .text = raw.state.text,
+            .data = raw.state.data,
+            .embeddings = raw.state.embeddings,
+            .timestamp_ms = if (raw.state.timestamp) |t| @intFromFloat(t) else null,
+            .source = raw.state.source,
+        },
+        .schemas = schemas,
+        .domain = raw.domain orelse "general",
+        .graph = try buildGraph(a, raw.graph, schemas),
+    };
+}
+
+pub fn parseExecuteRequest(a: alloc.Allocator, body: []const u8) Error!ExecuteRequest {
+    const raw = std.json.parseFromSliceLeaky(RawExecuteRequest, a, body, .{}) catch return error.InvalidJson;
+    return fromRawExecute(a, raw);
+}
+
+pub fn writeExecuteResponse(
+    aw: *std.Io.Writer.Allocating,
+    outcome: executor.Outcome,
+    calibration: []const u8,
+) !void {
+    const w = &aw.writer;
+    try w.writeAll("{\"trajectory\":[");
+    for (outcome.steps, 0..) |st, i| {
+        if (i > 0) try w.writeByte(',');
+        try w.writeAll("{\"node_id\":");
+        try writeJsonString(w, st.node_id);
+        try w.writeAll(",\"decision_id\":");
+        try writeJsonString(w, st.decision_id);
+        try w.writeAll(",\"result\":");
+        try writeResult(w, st.result);
+        if (st.action) |act| {
+            try w.writeAll(",\"action\":");
+            try writeJsonString(w, act);
+        }
+        try w.writeByte('}');
+    }
+    try w.writeAll("],\"skipped\":[");
+    for (outcome.skipped, 0..) |sk, i| {
+        if (i > 0) try w.writeByte(',');
+        try writeJsonString(w, sk);
+    }
+    try w.print("],\"path_prob\":{d:.6},\"calibration\":", .{outcome.path_prob});
+    try writeJsonString(w, calibration);
+    try w.writeByte('}');
+}
+
+test "parse execute request builds graph with parsed conditions" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const req = try parseExecuteRequest(a,
+        \\{"state":{"text":"hi"},
+        \\ "decisions":[{"id":"c1","type":"choice","options":["a","b"]}],
+        \\ "graph":{"nodes":[{"id":"n1","decision":"c1"}],"edges":[]}}
+    );
+    try std.testing.expectEqual(@as(usize, 1), req.graph.nodes.len);
+    try std.testing.expectEqualStrings("n1", req.graph.nodes[0].id);
+}
+
+test "execute request rejects cycle with invalid_graph" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const body =
+        \\{"state":{"text":"hi"},
+        \\ "decisions":[{"id":"c1","type":"choice","options":["a"]},{"id":"c2","type":"choice","options":["a"]}],
+        \\ "graph":{"nodes":[{"id":"n1","decision":"c1"},{"id":"n2","decision":"c2"}],
+        \\          "edges":[{"from":"n1","to":"n2","when":"c1 == a"},{"from":"n2","to":"n1","when":"c2 == a"}]}}
+    ;
+    try std.testing.expectError(error.InvalidGraph, parseExecuteRequest(arena.allocator(), body));
+}
+
+test "execute request rejects condition type mismatch" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const body =
+        \\{"state":{"text":"hi"},
+        \\ "decisions":[{"id":"c1","type":"choice","options":["a","b"]}],
+        \\ "graph":{"nodes":[{"id":"n1","decision":"c1"}],
+        \\          "edges":[{"from":"n1","to":"n1","when":"c1 > a"}]}}
+    ;
+    try std.testing.expectError(error.InvalidGraph, parseExecuteRequest(arena.allocator(), body));
+}
+
+test "execute request rejects bad gate threshold" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const body =
+        \\{"state":{"text":"hi"},
+        \\ "decisions":[{"id":"c1","type":"choice","options":["a","b"]}],
+        \\ "graph":{"nodes":[{"id":"n1","decision":"c1","gate":{"threshold":1.5,"action_above":"x","action_below":"y","action_abstain":"z"}}],"edges":[]}}
+    ;
+    try std.testing.expectError(error.InvalidGraph, parseExecuteRequest(arena.allocator(), body));
+}
+
+test "write execute response shape" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const r: result.DecisionResult = .{
+        .id = "c1",
+        .type = .choice,
+        .value = .{ .choice = "a" },
+        .probabilities = &.{ 0.6, 0.4 },
+        .labels = &.{ "a", "b" },
+        .uncertainty = .{ .confidence = 0.6 },
+        .latency_us = 12,
+    };
+    const outcome: executor.Outcome = .{
+        .steps = &.{.{
+            .node_id = "n1",
+            .decision_id = "c1",
+            .result = r,
+            .action = "go",
+        }},
+        .skipped = &.{},
+        .path_prob = 0.6,
+    };
+    var aw: std.Io.Writer.Allocating = .init(a);
+    defer aw.deinit();
+    try writeExecuteResponse(&aw, outcome, "matched");
+    const s = try aw.toOwnedSlice();
+    try std.testing.expect(std.mem.indexOf(u8, s, "\"node_id\":\"n1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, s, "\"action\":\"go\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, s, "\"path_prob\":0.600000") != null);
+    try std.testing.expect(std.mem.indexOf(u8, s, "\"skipped\":[]") != null);
 }
