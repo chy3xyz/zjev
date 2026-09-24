@@ -1,0 +1,7 @@
+.{
+    .name = .zjev,
+    .version = "0.1.0",
+    .fingerprint = 0xc16a9af97e5ef7ec,
+    .minimum_zig_version = "0.17.0",
+    .paths = .{""},
+}
