@@ -459,3 +459,174 @@ pub fn parse(a: alloc.Allocator, src: []const u8, schemas: []const schema.Decisi
     if (p.peek() != .eof) return error.Syntax;
     return c;
 }
+
+// ---- eval（Task 3）----
+
+const result = @import("../core/result.zig");
+
+pub const EvalError = error{ UnknownDecision, ConditionDependency, TypeMismatch };
+
+fn drChoice(id: []const u8, v: []const u8, conf: f32, abst: ?f32) result.DecisionResult {
+    return .{
+        .id = id,
+        .type = .choice,
+        .value = .{ .choice = v },
+        .uncertainty = .{ .confidence = conf, .abstention = abst },
+    };
+}
+
+fn drNoul(id: []const u8, b: bool, pyes: f32) result.DecisionResult {
+    return .{
+        .id = id,
+        .type = .noul,
+        .value = .{ .noul = b },
+        .probability = pyes,
+        .uncertainty = .{ .confidence = pyes },
+    };
+}
+
+test "eval eq true on choice value" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const rs = [_]result.DecisionResult{drChoice("risk", "high", 0.8, 0.1)};
+    try std.testing.expect(try eval(try parse(a, "risk == high", &fixture_schemas), &rs));
+    try std.testing.expect(!(try eval(try parse(a, "risk == low", &fixture_schemas), &rs)));
+}
+
+test "eval numeric on score value" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const r: result.DecisionResult = .{
+        .id = "sev",
+        .type = .score,
+        .value = .{ .score = 3.6 },
+        .uncertainty = .{ .confidence = 0.5 },
+    };
+    const rs = [_]result.DecisionResult{r};
+    try std.testing.expect(try eval(try parse(a, "sev >= 3", &fixture_schemas), &rs));
+    try std.testing.expect(!(try eval(try parse(a, "sev < 3", &fixture_schemas), &rs)));
+}
+
+test "eval and or not" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const rs = [_]result.DecisionResult{
+        drChoice("risk", "high", 0.8, 0.1),
+        drNoul("flag", true, 0.7),
+    };
+    try std.testing.expect(try eval(try parse(a, "risk == high and flag", &fixture_schemas), &rs));
+    try std.testing.expect(try eval(try parse(a, "risk == low or flag", &fixture_schemas), &rs));
+    try std.testing.expect(!(try eval(try parse(a, "not flag", &fixture_schemas), &rs)));
+}
+
+test "eval confidence and abstention" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const rs = [_]result.DecisionResult{drChoice("risk", "high", 0.8, 0.1)};
+    try std.testing.expect(try eval(try parse(a, "risk.confidence > 0.5 and risk.abstention <= 0.1", &fixture_schemas), &rs));
+}
+
+test "eval noul boolean literal" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const rs = [_]result.DecisionResult{drNoul("flag", false, 0.3)};
+    try std.testing.expect(try eval(try parse(a, "flag == false", &fixture_schemas), &rs));
+    try std.testing.expect(!(try eval(try parse(a, "flag", &fixture_schemas), &rs)));
+}
+
+test "eval errors when decision not executed" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const c = try parse(a, "risk == high", &fixture_schemas);
+    try std.testing.expectError(error.ConditionDependency, eval(c, &.{}));
+}
+
+const V = union(enum) { str: []const u8, num: f32, boolean: bool };
+
+fn findResult(results: []const result.DecisionResult, id: []const u8) ?result.DecisionResult {
+    for (results) |r| {
+        if (std.mem.eql(u8, r.id, id)) return r;
+    }
+    return null;
+}
+
+fn fieldVal(fr: FieldRef, results: []const result.DecisionResult) EvalError!V {
+    const r = findResult(results, fr.decision) orelse return error.ConditionDependency;
+    switch (fr.field) {
+        .confidence => return .{ .num = r.uncertainty.confidence },
+        .abstention => {
+            const ab = r.uncertainty.abstention orelse return error.TypeMismatch;
+            return .{ .num = ab };
+        },
+        .value => return switch (r.value) {
+            .choice => |s| .{ .str = s },
+            .noul => |b| .{ .boolean = b },
+            .score => |x| .{ .num = x },
+            .rank => return error.TypeMismatch,
+        },
+    }
+}
+
+fn operandVal(o: Operand, results: []const result.DecisionResult) EvalError!V {
+    return switch (o) {
+        .field => |fr| fieldVal(fr, results),
+        .lit => |l| switch (l) {
+            .str => |s| .{ .str = s },
+            .num => |n| .{ .num = n },
+            .boolean => |b| .{ .boolean = b },
+        },
+    };
+}
+
+fn cmpVals(op: CmpOp, x: V, y: V) EvalError!bool {
+    if (std.meta.activeTag(x) != std.meta.activeTag(y)) return error.TypeMismatch;
+    return switch (x) {
+        .str => |s| switch (op) {
+            .eq => std.mem.eql(u8, s, y.str),
+            .ne => !std.mem.eql(u8, s, y.str),
+            else => return error.TypeMismatch,
+        },
+        .boolean => |b| switch (op) {
+            .eq => b == y.boolean,
+            .ne => b != y.boolean,
+            else => return error.TypeMismatch,
+        },
+        .num => |u| switch (op) {
+            .eq => u == y.num,
+            .ne => u != y.num,
+            .gt => u > y.num,
+            .lt => u < y.num,
+            .ge => u >= y.num,
+            .le => u <= y.num,
+        },
+    };
+}
+
+pub fn eval(c: Cond, results: []const result.DecisionResult) EvalError!bool {
+    return switch (c) {
+        .cmp => |k| cmpVals(k.op, try operandVal(k.lhs, results), try operandVal(k.rhs, results)),
+        .or_ => |parts| blk: {
+            for (parts) |p| {
+                if (try eval(p, results)) break :blk true;
+            }
+            break :blk false;
+        },
+        .and_ => |parts| blk: {
+            for (parts) |p| {
+                if (!(try eval(p, results))) break :blk false;
+            }
+            break :blk true;
+        },
+        .not => |inner| !(try eval(inner.*, results)),
+        .truthy => |o| switch (try operandVal(o, results)) {
+            .boolean => |b| b,
+            else => return error.TypeMismatch,
+        },
+    };
+}
