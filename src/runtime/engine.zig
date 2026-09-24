@@ -35,6 +35,22 @@ pub fn run(
     });
     const results = try a.alloc(result.DecisionResult, schemas.len);
 
+    if (model.heads.get(.noul).bundled) {
+        // bundle-shaped graph: one decide() over the full schema set,
+        // flat logits in schema order.
+        const z = try model.heads.get(.noul).decide(a, hidden, schemas);
+        var off: usize = 0;
+        for (schemas, 0..) |sc, i| {
+            const n = logits_mod.logitCount(sc);
+            const dst_off = flatOffset(schemas, i);
+            @memcpy(flat[dst_off .. dst_off + n], z[off .. off + n]);
+            const temp: f32 = if (temps) |ts| ts[i] else 1.0;
+            results[i] = try finishOne(a, sc, flat[dst_off .. dst_off + n], temp);
+            off += n;
+        }
+        return .{ .results = results, .logits = flat };
+    }
+
     var by_type: [4]alloc.List(usize) = .{ .empty, .empty, .empty, .empty };
     defer for (&by_type) |*l| l.deinit(a);
     for (schemas, 0..) |sc, i| {

@@ -87,7 +87,7 @@ fn outputLogitCount(ort: *const api.OrtApi, sess: *api.OrtSession) Error!usize {
     defer ort.ReleaseTypeInfo(type_info);
     var tensor_info: ?*const api.OrtTensorTypeAndShapeInfo = null;
     try checkStatus(ort, ort.CastTypeInfoToTensorInfo(type_info, &tensor_info), error.BadModelIO);
-    defer if (tensor_info) |ti| ort.ReleaseTensorTypeAndShapeInfo(@constCast(ti));
+    // tensor_info is borrowed from type_info (ORT C API): do NOT release it.
     var count: usize = 0;
     try checkStatus(ort, ort.GetTensorShapeElementCount(tensor_info, &count), error.BadModelIO);
     return count;
@@ -254,7 +254,7 @@ pub fn openOnnx(a: alloc.Allocator, io: std.Io, model_path: []const u8, num_sess
         .ptr = self,
         .deinitFn = modelDeinit,
         .encoder = .{ .ptr = self, .vtable = &encoder_vtable },
-        .heads = .initFill(.{ .ptr = self, .vtable = &head_vtable }),
+        .heads = .initFill(.{ .ptr = self, .vtable = &head_vtable, .bundled = true }),
     };
 }
 
