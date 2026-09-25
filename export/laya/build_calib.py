@@ -21,7 +21,7 @@ def main():
         if not line.strip():
             continue
         r = json.loads(line)
-        labels = [r["escalate"], r["topic"], URGENCY_ORDER.index(r["urgency"])]
+        labels = [r["escalate"], r["topic"], r["urgency"]]  # score labels scale: label 必须是字符串
         for dec, lab in zip(DECISIONS, labels):
             out.write(json.dumps({"state": {"text": r["text"]}, "decision": dec, "label": lab}) + "\n")
             n += 1
