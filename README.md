@@ -95,7 +95,8 @@ M4 温度标定（不重训修校准，已端到端验证）：拟合 expand 数
 profiles 复测 traj，`--profiles-dir` 按 (model, task, num_options, domain)
 查 T，traj_ece 0.200→0.106、brier -14%、acc 不变（T 保序）。注意 noul 节点
 `confidence` 语义是 P(yes)（gate 阈值口径），与 fit 的 max-prob ece 不同口径。
-实测对比与解读见 `benchmarks/temp_laya_2026-09-25.md`：
+实测对比与解读见 `benchmarks/temp_laya_2026-09-25.md`（单个例子逐项对比可跑
+`export/laya/demo_profiles.py`，起带/不带 profiles 两个 serve 实例对照输出）：
 
 ```bash
 export/laya/.venv/bin/python export/laya/build_calib.py   # eval 展开 3 行/记录 → datasets/support_bundle_calib.jsonl
