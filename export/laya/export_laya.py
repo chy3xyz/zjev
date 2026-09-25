@@ -87,12 +87,13 @@ def export_encoder(model, out_path: str):
     log("encoder exported:", out_path)
 
 
-def tokenizer_graph(stage_dir: str, pad_id: int):
-    """HfJsonTokenizer graph (schema v2) + in-graph attention_mask derivation.
+def tokenizer_graph(stage_dir: str, pad_id: int, cls_id: int, sep_id: int):
+    """HfJsonTokenizer graph (schema v2) + in-graph special tokens + mask.
 
-    HfJsonTokenizer emits only `ids`; ModernBERT also needs `attention_mask`,
-    derived as ids != pad_id (the tokenizer never pads, so this is all-ones
-    in practice, but shape-correct for any input).
+    HfJsonTokenizer emits raw ids WITHOUT post-processing (no [CLS]/[SEP]) —
+    feeding those to the encoder breaks the contract (head reads position 0
+    as CLS). We wrap it in-graph: Concat([cls], ids, [sep]) on the tokenized
+    axis, then derive attention_mask as ids != pad_id over the full sequence.
     Returns (model, ids_output_name).
     """
     from onnxruntime_extensions import gen_processing_models
@@ -117,27 +118,35 @@ def tokenizer_graph(stage_dir: str, pad_id: int):
                 n.input[i] = "text"
     ids_out = g.output[0].name
     assert ids_out == "ids", ids_out
+
     ids_type = g.output[0].type.tensor_type.elem_type
+    np_ids_t = np.int32 if ids_type == onnx.TensorProto.INT32 else np.int64
     g.output.pop()
 
-    g.initializer.append(numpy_helper.from_array(
-        np.array(pad_id, dtype=np.int64), "pad_id"))
+    init = lambda name, arr: g.initializer.append(numpy_helper.from_array(arr, name))
+    init("pad_id", np.array(pad_id, dtype=np.int64))
+    # ids are rank-2 [1, N]: special tokens are [1,1], concat on axis 1
+    init("cls_id", np.array([[cls_id]], dtype=np_ids_t))
+    init("sep_id", np.array([[sep_id]], dtype=np_ids_t))
+
     ids_i64 = ids_out
     if ids_type != onnx.TensorProto.INT64:
         g.node.append(helper.make_node(
             "Cast", [ids_out], ["ids_i64"], to=onnx.TensorProto.INT64))
         ids_i64 = "ids_i64"
     g.node.append(helper.make_node(
-        "Equal", [ids_i64, "pad_id"], ["mask_eq"]))
+        "Concat", ["cls_id", ids_i64, "sep_id"], ["ids_full"], axis=1))
+    g.node.append(helper.make_node(
+        "Equal", ["ids_full", "pad_id"], ["mask_eq"]))
     g.node.append(helper.make_node(
         "Not", ["mask_eq"], ["mask_ne"]))
     g.node.append(helper.make_node(
         "Cast", ["mask_ne"], ["attention_mask"], to=onnx.TensorProto.INT64))
     g.output.append(helper.make_tensor_value_info(
-        ids_i64, onnx.TensorProto.INT64, ["N", None]))
+        "ids_full", onnx.TensorProto.INT64, ["B", None]))
     g.output.append(helper.make_tensor_value_info(
-        "attention_mask", onnx.TensorProto.INT64, ["N", None]))
-    return m, ids_i64
+        "attention_mask", onnx.TensorProto.INT64, ["B", None]))
+    return m, "ids_full"
 
 
 def add_head(merged: onnx.ModelProto, hidden_size: int, head_path: str | None = None) -> onnx.ModelProto:
@@ -182,6 +191,8 @@ def main():
     ap.add_argument("--out", default=str(Path(__file__).parent / "out" / "laya.onnx"))
     ap.add_argument("--head", default=None,
                     help="trained head .pt (weight[8,H]/bias[8]); default random seed 42")
+    ap.add_argument("--encoder-tail", default=None,
+                    help="fine-tuned encoder tail .pt (state_dict of thawed params)")
     a = ap.parse_args()
 
     stage = stage_files(a.repo_id)
@@ -189,8 +200,19 @@ def main():
     tk = Tokenizer.from_file(str(stage / "tokenizer.json"))
     pad_id = tk.token_to_id("[PAD]")
     assert pad_id is not None, "no [PAD] token in tokenizer"
-    log("pad_id:", pad_id)
+    cls_id = tk.token_to_id("[CLS]")
+    sep_id = tk.token_to_id("[SEP]")
+    assert cls_id is not None and sep_id is not None, "no [CLS]/[SEP] tokens in tokenizer"
+    log("pad_id:", pad_id, "cls_id:", cls_id, "sep_id:", sep_id)
     model = load_laya_encoder(str(stage))
+    if a.encoder_tail:
+        tail = torch.load(a.encoder_tail, map_location="cpu")
+        msd = model.state_dict()
+        missing = [k for k in tail if k not in msd]
+        assert not missing, f"encoder-tail keys not in model: {missing[:5]}"
+        msd.update(tail)
+        model.load_state_dict(msd)
+        log(f"encoder tail overridden: {a.encoder_tail} ({len(tail)} tensors)")
     model.eval()
     hidden = model.config.hidden_size
     assert hidden == 1024, hidden
@@ -206,7 +228,7 @@ def main():
     enc_ids = next(n for n in enc_ins if "input_ids" in n)
     enc_mask = next(n for n in enc_ins if "attention_mask" in n)
 
-    tok_g, ids_out_name = tokenizer_graph(str(stage), pad_id)
+    tok_g, ids_out_name = tokenizer_graph(str(stage), pad_id, cls_id, sep_id)
     tok_g.ir_version = enc.ir_version
 
     merged = merge_models(tok_g, enc, io_map=[
