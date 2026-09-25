@@ -134,11 +134,18 @@ urgency acc 1.0（n=592，退化读数——升级路径上金标恒 high）。�
    修复 `load_laya_encoder()` + `torch.equal` 断言（`75eac39`）。
 2. **[中] serve 退出必 abort**：sentinel 分配按错长度 free（SafeAllocator），
    已修（`64a4e7e`）。
-3. **[低] MPS「假死」误判**：训练日志只在 epoch 末打印，中途采样主线程
+5. **[严重] 图内 tokenizer 丢特殊 token**：HfJsonTokenizer 输出 raw ids，无
+   [CLS]/[SEP]（训练走 AutoTokenizer 有）→ ONNX 图在 CLS-less 输入上跑，
+   而 head 按位置 0 = CLS 训练——500 条探针 escalate acc **0.61 vs torch 0.79**
+   （torch-cpu 与 torch-mps 完全一致，排除设备因素）。修复：图内
+   Concat([cls], ids, [sep]) + 全长 mask（smoke_check 断言常量存在），
+   修复后 ORT 0.78 vs torch 0.79、一致率 98.4%（残差 = >128 token 的
+   截断差异）。**M2 的 traj 读数是在坏图上测的，已加勘误**；M3 traj 复测后补齐。
+6. **[低] MPS「假死」误判**：训练日志只在 epoch 末打印，中途采样主线程
    阻塞在 `.item()` 同步属正常；两次误杀后定位（吞吐实测 1.6s/batch）。
-4. **[低] 数据集列名与计划假设不符**：侦察步骤消化（body/subject、type、
+7. **[低] 数据集列名与计划假设不符**：侦察步骤消化（body/subject、type、
    tag_1..8、priority 五档），映射规则以侦察为准。
-5. **[低] zjev-traj 读数在 stderr**（`std.debug.print`），重定向时易丢。
+8. **[低] zjev-traj 读数在 stderr**（`std.debug.print`），重定向时易丢。
 
 ## 8. 复现
 
