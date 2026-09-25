@@ -18,6 +18,10 @@ pub fn main(init: std.process.Init) !void {
     var domain: []const u8 = "general";
     var out_dir: []const u8 = "model/calibration";
     var mock_mode: []const u8 = "peaked";
+    var model_path: ?[]const u8 = null;
+    var num_sessions: u16 = 0;
+    var ort_extensions: ?[]const u8 = null;
+    var bundle_json: ?[]const u8 = null;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
@@ -36,12 +40,28 @@ pub fn main(init: std.process.Init) !void {
         } else if (std.mem.eql(u8, arg, "--mock-mode") and i + 1 < args.len) {
             i += 1;
             mock_mode = args[i];
+        } else if (std.mem.eql(u8, arg, "--model") and i + 1 < args.len) {
+            i += 1;
+            model_path = args[i];
+        } else if (std.mem.eql(u8, arg, "--sessions") and i + 1 < args.len) {
+            i += 1;
+            num_sessions = try std.fmt.parseInt(u16, args[i], 10);
+        } else if (std.mem.eql(u8, arg, "--ort-extensions") and i + 1 < args.len) {
+            i += 1;
+            ort_extensions = args[i];
+        } else if (std.mem.eql(u8, arg, "--bundle") and i + 1 < args.len) {
+            i += 1;
+            bundle_json = args[i];
         }
     }
     const path = dataset_path orelse {
-        std.debug.print("usage: zjev-fit --dataset <jsonl> [--model-name name] [--domain d] [--out dir] [--mock-mode m]\n", .{});
+        std.debug.print("usage: zjev-fit --dataset <jsonl> [--mock-mode m] [--model-name n] [--domain d] [--out dir] [--model p.onnx [--sessions n] [--ort-extensions lib] --bundle '<json>']]\n", .{});
         std.process.exit(2);
     };
+    if (model_path == null and bundle_json != null) {
+        std.debug.print("--bundle requires --model (ONNX bundle)\n", .{});
+        std.process.exit(2);
+    }
 
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
@@ -58,22 +78,105 @@ pub fn main(init: std.process.Init) !void {
         .sequence
     else
         .peaked;
-    var model = try zjev.mock.model(mode, a);
+    var model = if (model_path) |mp| blk: {
+        const m = zjev.factory.open(a, io, .{
+            .kind = .onnx,
+            .model_path = mp,
+            .num_sessions = num_sessions,
+            .ort_extensions = ort_extensions,
+        }) catch |e| {
+            if (e == error.Unsupported) {
+                std.debug.print("--model requires an onnx build: zig build -Donnx=true -Donnx_lib_dir=<dir>\n", .{});
+                std.process.exit(2);
+            }
+            std.debug.print("failed to open model '{s}': {s}\n", .{ mp, @errorName(e) });
+            std.process.exit(1);
+        };
+        break :blk m;
+    } else try zjev.mock.model(mode, a);
     defer model.deinit(a);
+
+    var bundle_schemas: ?[]zjev.schema.DecisionSchema = null;
+    var seg_starts: []usize = &.{};
+    if (bundle_json) |bj| {
+        const raw = std.json.parseFromSliceLeaky([]zjev.api_json.RawDecision, a, bj, .{}) catch {
+            std.debug.print("invalid --bundle json\n", .{});
+            std.process.exit(2);
+        };
+        const parsed = zjev.api_json.fromRaw(a, .{ .state = .{ .text = "x" }, .decisions = raw }) catch {
+            std.debug.print("invalid --bundle schemas\n", .{});
+            std.process.exit(2);
+        };
+        bundle_schemas = parsed.schemas;
+        var starts: std.ArrayList(usize) = .empty;
+        var off: usize = 0;
+        for (parsed.schemas) |sc| {
+            try starts.append(a, off);
+            off += zjev.logits.logitCount(sc);
+        }
+        seg_starts = starts.items;
+    }
 
     var groups: std.ArrayList(Group) = .empty;
 
+    const total_recs = records.len;
+    var skipped: usize = 0;
+    var cached_text: ?[]const u8 = null;
+    var cached_logits: []const f32 = &.{};
+
     for (records) |rec| {
-        const rd = std.json.parseFromValueLeaky(zjev.api_json.RawDecision, a, rec.decision, .{}) catch continue;
+        const rd = std.json.parseFromValueLeaky(zjev.api_json.RawDecision, a, rec.decision, .{}) catch {
+            skipped += 1;
+            continue;
+        };
         var raws = [1]zjev.api_json.RawDecision{rd};
         const raw_req = zjev.api_json.RawRequest{
             .state = .{ .id = rec.state_id, .text = rec.state_text },
             .decisions = &raws,
         };
-        const parsed = zjev.api_json.fromRaw(a, raw_req) catch continue;
+        const parsed = zjev.api_json.fromRaw(a, raw_req) catch {
+            skipped += 1;
+            continue;
+        };
         const s = parsed.schemas[0];
-        const li = dataset.labelIndex(s, rec.label) catch continue;
-        const outcome = zjev.engine.decideRaw(a, &model, &parsed.state, parsed.schemas) catch continue;
+        const li = dataset.labelIndex(s, rec.label) catch {
+            skipped += 1;
+            continue;
+        };
+
+        var seg: []const f32 = undefined;
+        if (bundle_schemas) |bs| {
+            const key = rec.state_text orelse rec.state_id orelse "";
+            if (cached_text == null or !std.mem.eql(u8, cached_text.?, key)) {
+                const full = zjev.engine.decideRaw(a, &model, &parsed.state, bs) catch {
+                    skipped += 1;
+                    continue;
+                };
+                cached_text = try a.dupe(u8, key);
+                cached_logits = full.logits;
+            }
+            const si = blk: {
+                for (bs, 0..) |bsc, idx| {
+                    if (std.mem.eql(u8, bsc.id(), s.id())) break :blk idx;
+                }
+                skipped += 1;
+                continue;
+            };
+            const st = seg_starts[si];
+            const n = zjev.logits.logitCount(s);
+            if (st + n > cached_logits.len) {
+                skipped += 1;
+                continue;
+            }
+            seg = cached_logits[st .. st + n];
+        } else {
+            const outcome = zjev.engine.decideRaw(a, &model, &parsed.state, parsed.schemas) catch {
+                skipped += 1;
+                continue;
+            };
+            seg = outcome.logits;
+        }
+
         const num: u16 = switch (s) {
             .choice => |c| @intCast(c.options.len),
             .noul => 2,
@@ -81,9 +184,10 @@ pub fn main(init: std.process.Init) !void {
             .rank => |r| @intCast(r.items.len),
         };
         const gop = findOrAdd(&groups, a, std.meta.activeTag(s), num) catch continue;
-        try gop.zs.append(a, outcome.logits);
+        try gop.zs.append(a, seg);
         try gop.labels.append(a, li);
     }
+    std.debug.print("fitted: {d} skipped: {d}\n", .{ total_recs - skipped, skipped });
 
     std.Io.Dir.cwd().createDir(io, out_dir, .default_dir) catch {};
     var out_dir_handle = std.Io.Dir.cwd().openDir(io, out_dir, .{}) catch std.Io.Dir.cwd();

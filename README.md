@@ -28,6 +28,7 @@ CLI 选项：`--bind` `--port` `--mock-mode uniform|peaked|sequence` `--profiles
 
 ```bash
 zig-out/bin/zjev-fit --dataset datasets/calibration_sample.jsonl   # 拟合 temperature，写 model/calibration/*.json（含 ece/brier/selective_risk@0.5/0.7/0.9/0.95）
+zig-out/bin/zjev-fit --dataset <jsonl> --model m.onnx --ort-extensions lib --bundle '<schema-bundled 完整 JSON>'   # 真模型束拟合：bundle 给出段表（ΣlogitCount=图宽），按 state 缓存前向
 zig-out/bin/zjev-bench --dataset <jsonl> [--profiles-dir model/calibration]  # 输出 accuracy/brier/ece/mce + selective_risk 四档
 zig-out/bin/zjev-traj --dataset datasets/traj_sample.jsonl --mock-mode sequence  # 轨迹级校准报告（node vs trajectory 并排 + selective_risk）
 ```
@@ -88,8 +89,25 @@ acc 0.785·ece 0.586 / topic acc 0.888·ece 0.093）与解读见
 `benchmarks/traj_laya_2026-09-25.md`）。head 训练指标
 eval acc：escalate 0.786 / topic 0.847 / urgency 0.686。
 已知限制：合成模板数据、escalate 与 urgency 标签共线、escalate 过拟合饱和
-（温度标定是下一步最高性价比改进；解冻 encoder 见 M3：
-`docs/reports/2026-09-25-laya-head-training-report.md`）。
+（解冻 encoder 见 M3：`docs/reports/2026-09-25-laya-head-training-report.md`）。
+
+M4 温度标定（不重训修校准，已端到端验证）：拟合 expand 数据集后带
+profiles 复测 traj，`--profiles-dir` 按 (model, task, num_options, domain)
+查 T，traj_ece 0.200→0.106、brier -14%、acc 不变（T 保序）。注意 noul 节点
+`confidence` 语义是 P(yes)（gate 阈值口径），与 fit 的 max-prob ece 不同口径。
+实测对比与解读见 `benchmarks/temp_laya_2026-09-25.md`：
+
+```bash
+export/laya/.venv/bin/python export/laya/build_calib.py   # eval 展开 3 行/记录 → datasets/support_bundle_calib.jsonl
+./zig-out/bin/zjev-fit --dataset datasets/support_bundle_calib.jsonl \
+    --model export/laya/out/laya.onnx \
+    --ort-extensions export/laya/lib/libortextensions.dylib \
+    --bundle '<完整 schema JSON>' --model-name laya --domain general   # 写 model/calibration/laya_*.json
+./zig-out/bin/zjev-traj --dataset datasets/support_bundle_eval.jsonl \
+    --model export/laya/out/laya.onnx \
+    --ort-extensions export/laya/lib/libortextensions.dylib \
+    --profiles-dir model/calibration --model-name laya --domain general 2>readings.json
+```
 
 ```bash
 export/laya/.venv/bin/pip install -r export/laya/requirements.txt

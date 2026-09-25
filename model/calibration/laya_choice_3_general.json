@@ -1,0 +1,1 @@
+{"model":"laya","task":"choice","num_options":3,"domain":"general","temperature":4.821276664733887,"ece":0.02641759254038334,"brier":0.23433533310890198,"nll":null,"selective_risk@0.5":0.0555555559694767,"selective_risk@0.7":0.07632044702768326,"selective_risk@0.9":0.12030666321516037,"selective_risk@0.95":0.13538174331188202,"fitted_at":"zjev-fit"}

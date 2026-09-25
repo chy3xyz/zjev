@@ -117,6 +117,13 @@ trajectory 误差主源。**M3 修复图读数**：trajectory_accuracy 0.754、
 escalate acc 0.785（与训练 eval 0.786 对齐）/ ece 0.586（过拟合饱和）、
 topic acc 0.888 / ece 0.093——见 `benchmarks/traj_laya_ft_2026-09-25.md`。
 
+**M4 标定后读数**（2026-09-25 追加，同 eval 集带 temperature profiles 复测）：
+trajectory_accuracy 0.754（不变，T 保序）/ **traj_ece 0.106**（-47%）/
+traj_brier 0.181（-14%）；escalate ece 0.393（-33%，P(yes) 口径，结构性
+上限见 benchmark 口径说明）、topic ece 0.045。温度 T=9.61/4.82/7.97，
+拟合集 max-prob ece 0.03/0.03/0.04。详见
+`benchmarks/temp_laya_2026-09-25.md`。
+
 ## 6. 分析
 
 1. **容量**：M2 的 escalate/urgency 仅略高于多数类，M3 解冻后显著上升——
@@ -127,8 +134,8 @@ topic acc 0.888 / ece 0.093——见 `benchmarks/traj_laya_ft_2026-09-25.md`。
 3. **共线**：escalate=true ⇒ 金标 urgency=high，升级路径上 urgency 全对
    是退化读数，解释 trajectory 结果时须剔除这一分量。
 4. **校准**：M2 escalate 节点 ECE 0.381——置信度与正确率严重脱节
-   （模型倾向不升级）。温度标定（`zjev-fit` / profiles）可作为不重训的
-   改进手段。
+   （模型倾向不升级）。温度标定（`zjev-fit` / profiles）是不重训的修校准
+   手段，M4 已端到端验证（traj_ece 0.200→0.106，零精度代价）。
 
 ## 7. 事故与偏差记录（按严重度）
 
