@@ -1,8 +1,8 @@
 # Laya 决策 head 训练报告
 
 日期：2026-09-25
-状态：M2（冻结 encoder）与 M3（解冻末 2 层）均已完成；M3 traj 实测进行中，
-§5.4 为其训练指标最终值，轨迹级读数补齐后刷新。
+状态：M2（冻结 encoder）与 M3（解冻末 2 层）均已完成并实测（修复图）。
+轨迹级读数以 `benchmarks/traj_laya_ft_2026-09-25.md` 为准。
 关联：`docs/superpowers/specs/2026-09-24-m2-trained-head-design.md`、`docs/superpowers/specs/2026-09-25-m3-unfreeze-finetune-design.md`、`benchmarks/traj_laya_2026-09-25.md`
 
 ## 1. 概述
@@ -111,8 +111,11 @@ hidden 1024）。**权重加载必须走 `load_laya_encoder()`**（手动剥 `en
 `{"trajectory_accuracy": 0.548, "traj_ece": 0.173}`；
 by_node：escalate acc 0.593 / ece 0.381；topic acc 0.571（n=592）；
 urgency acc 1.0（n=592，退化读数——升级路径上金标恒 high）。详见
-`benchmarks/traj_laya_2026-09-25.md`。要点：escalate 节点严重欠校准且触发率
-（10.5%）远低于金标（38.6%），是 trajectory 误差主源；M3 模型实测待训练完成后补。
+`benchmarks/traj_laya_2026-09-25.md`（**已勘误：坏图读数**）。
+要点：escalate 节点严重欠校准且触发率（10.5%）远低于金标（38.6%），是
+trajectory 误差主源。**M3 修复图读数**：trajectory_accuracy 0.754、
+escalate acc 0.785（与训练 eval 0.786 对齐）/ ece 0.586（过拟合饱和）、
+topic acc 0.888 / ece 0.093——见 `benchmarks/traj_laya_ft_2026-09-25.md`。
 
 ## 6. 分析
 

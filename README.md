@@ -82,10 +82,14 @@ export/laya/.venv/bin/python export/laya/smoke_check.py
     --ort-extensions export/laya/lib/libortextensions.dylib 2>readings.json
 ```
 
-实测读数（5652 条 eval，trajectory_accuracy 0.548 / traj_ece 0.173 / escalate
-节点 ece 0.381）与解读见 `benchmarks/traj_laya_2026-09-25.md`；head 训练指标
-eval acc：escalate 0.659 / topic 0.792 / urgency 0.487。已知限制：合成模板数据、
-escalate 与 urgency 标签共线、冻结 encoder 容量受限（升级方向见 benchmark）。
+实测读数（5652 条 eval，**修复图**：trajectory_accuracy 0.754 / escalate
+acc 0.785·ece 0.586 / topic acc 0.888·ece 0.093）与解读见
+`benchmarks/traj_laya_ft_2026-09-25.md`（M2 坏图读数已勘误存档于
+`benchmarks/traj_laya_2026-09-25.md`）。head 训练指标
+eval acc：escalate 0.786 / topic 0.847 / urgency 0.686。
+已知限制：合成模板数据、escalate 与 urgency 标签共线、escalate 过拟合饱和
+（温度标定是下一步最高性价比改进；解冻 encoder 见 M3：
+`docs/reports/2026-09-25-laya-head-training-report.md`）。
 
 ```bash
 export/laya/.venv/bin/pip install -r export/laya/requirements.txt
