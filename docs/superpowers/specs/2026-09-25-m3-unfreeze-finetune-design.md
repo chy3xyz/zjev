@@ -48,7 +48,8 @@ epochs 上限 10、patience 3 不变。
 
 1. 默认（N=0）行为与 M2 逐比特兼容：`train_head.py` 不带新参数时产出与
    M2 相同结构 head.pt（不强制同数值——随机种子未固定）。
-2. N=2 训练跑完，日志打印可训参数量 ≈ 2 层 + head（约 1.3 亿）。
+2. N=2 训练跑完，日志打印可训参数量（实测：2 层 + final_norm + head
+   ≈ 24.5M，ModernBERT-large 单层约 12.6M 参数）。
 3. `--encoder-tail` 导出 + smoke_check 绿；serve 冒烟 200。
 4. zjev-traj 实测读数与 M2 并排写入 benchmark；若 escalate eval acc 提升
    <3pt，如实记录为负结果并停止该路线（改数据路线）。

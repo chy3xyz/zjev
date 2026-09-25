@@ -182,6 +182,8 @@ def main():
     ap.add_argument("--out", default=str(Path(__file__).parent / "out" / "laya.onnx"))
     ap.add_argument("--head", default=None,
                     help="trained head .pt (weight[8,H]/bias[8]); default random seed 42")
+    ap.add_argument("--encoder-tail", default=None,
+                    help="fine-tuned encoder tail .pt (state_dict of thawed params)")
     a = ap.parse_args()
 
     stage = stage_files(a.repo_id)
@@ -191,6 +193,14 @@ def main():
     assert pad_id is not None, "no [PAD] token in tokenizer"
     log("pad_id:", pad_id)
     model = load_laya_encoder(str(stage))
+    if a.encoder_tail:
+        tail = torch.load(a.encoder_tail, map_location="cpu")
+        msd = model.state_dict()
+        missing = [k for k in tail if k not in msd]
+        assert not missing, f"encoder-tail keys not in model: {missing[:5]}"
+        msd.update(tail)
+        model.load_state_dict(msd)
+        log(f"encoder tail overridden: {a.encoder_tail} ({len(tail)} tensors)")
     model.eval()
     hidden = model.config.hidden_size
     assert hidden == 1024, hidden

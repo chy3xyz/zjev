@@ -52,9 +52,12 @@ def collate(batch):
     return ids, mask, y
 
 
-def run(model, head, loader, device, opt=None):
+def run(model, head, loader, device, opt=None, thawed=False):
     train = opt is not None
-    model.eval()
+    if train and thawed:
+        model.train(True)
+    else:
+        model.eval()  # frozen-encoder mode (M2): constant eval, no dropout
     head.train(train)
     lossf = nn.CrossEntropyLoss()
     tot = [0, 0, 0]
@@ -85,6 +88,11 @@ def main():
     ap.add_argument("--out", default="export/laya/out/head.pt")
     ap.add_argument("--epochs", type=int, default=20)
     ap.add_argument("--patience", type=int, default=3)
+    ap.add_argument("--unfreeze-last", type=int, default=0,
+                    help="thaw last N transformer layers + final_norm (0 = frozen, M2 behavior)")
+    ap.add_argument("--head-lr", type=float, default=1e-3)
+    ap.add_argument("--encoder-lr", type=float, default=2e-5)
+    ap.add_argument("--encoder-out", default="export/laya/out/encoder_tail.pt")
     a = ap.parse_args()
 
     device = "mps" if torch.backends.mps.is_available() else "cpu"
@@ -95,19 +103,33 @@ def main():
     model.eval()
     for p in model.parameters():
         p.requires_grad_(False)
+    thaw_names: list[str] = []
+    if a.unfreeze_last > 0:
+        n_layers = model.config.num_hidden_layers
+        thaw = tuple(f"layers.{i}." for i in range(n_layers - a.unfreeze_last, n_layers))
+        for name, p in model.named_parameters():
+            if name.startswith(thaw) or name.startswith("final_norm."):
+                p.requires_grad_(True)
+                thaw_names.append(name)
+        print(f"[train] thawed last {a.unfreeze_last} layers + final_norm: "
+              f"{sum(p.numel() for p in model.parameters() if p.requires_grad)/1e6:.1f}M params", flush=True)
     model.to(device)
     head = nn.Linear(model.config.hidden_size, NUM_LOGITS).to(device)
 
     train_dl = DataLoader(Jsonl(a.train, tok), batch_size=32, shuffle=True, collate_fn=collate)
     eval_dl = DataLoader(Jsonl(a.eval, tok), batch_size=64, shuffle=False, collate_fn=collate)
 
-    opt = torch.optim.AdamW(head.parameters(), lr=1e-3)
+    groups = [{"params": list(head.parameters()), "lr": a.head_lr}]
+    enc_trainable = [p for p in model.parameters() if p.requires_grad]
+    if enc_trainable:
+        groups.append({"params": enc_trainable, "lr": a.encoder_lr})
+    opt = torch.optim.AdamW(groups, weight_decay=0.01)
     best = -1.0
     bad = 0
     metrics = {}
     for epoch in range(a.epochs):
-        tl, ta = run(model, head, train_dl, device, opt)
-        el, ea = run(model, head, eval_dl, device)
+        tl, ta = run(model, head, train_dl, device, opt, thawed=bool(thaw_names))
+        el, ea = run(model, head, eval_dl, device, thawed=bool(thaw_names))
         score = sum(ea) / 3
         ta_s = " ".join(f"{NAMES[k]}={ta[k]:.4f}" for k in range(3))
         ea_s = " ".join(f"{NAMES[k]}={ea[k]:.4f}" for k in range(3))
@@ -117,6 +139,9 @@ def main():
             bad = 0
             metrics = {"epoch": epoch, "eval_acc": dict(zip(NAMES, ea)), "train_acc": dict(zip(NAMES, ta))}
             torch.save({"weight": head.weight.detach().cpu(), "bias": head.bias.detach().cpu()}, a.out + ".best")
+            if thaw_names:
+                msd = model.state_dict()
+                torch.save({k: msd[k].cpu() for k in thaw_names}, a.encoder_out + ".best")
         else:
             bad += 1
             if bad >= a.patience:
@@ -126,6 +151,10 @@ def main():
     sd["metrics"] = metrics
     torch.save(sd, a.out)
     print("[train] saved:", a.out, "metrics:", metrics)
+    if thaw_names:
+        tail = torch.load(a.encoder_out + ".best", map_location="cpu")
+        torch.save(tail, a.encoder_out)
+        print("[train] saved encoder tail:", a.encoder_out, f"({len(tail)} tensors)")
 
 
 if __name__ == "__main__":
