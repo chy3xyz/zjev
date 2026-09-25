@@ -15,6 +15,8 @@ def main():
     m = onnx.load(str(MODEL))
     ins = [i.name for i in m.graph.input]
     assert ins == ["text"], f"inputs={ins}"
+    init_names = {i.name for i in m.graph.initializer}
+    assert {"cls_id", "sep_id"} <= init_names, "special-token constants missing in graph"
     out = m.graph.output[0]
     dims = [d.dim_value for d in out.type.tensor_type.shape.dim]
     assert out.name == "logits" and dims == [1, 8], f"output={out.name} dims={dims}"
