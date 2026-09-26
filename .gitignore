@@ -5,3 +5,4 @@ export/laya/.venv/
 export/laya/lib/
 export/laya/out/
 export/laya/.stage/
+__pycache__/
