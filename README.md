@@ -1,6 +1,7 @@
 # ZJEV
 
 Typed Probabilistic Decision Runtime —— 把非结构化状态转换为经过概率校准的结构化决策（Zig 0.17 实现）。
+**使用手册见 [`docs/user-manual.md`](docs/user-manual.md)**（安装 / API / 温度标定 / 故障排查）。
 
 协议与理论见 `docs/rfc-0001-zjev-decision-runtime.md`；设计规格见 `docs/specs/2026-09-24-zjev-v0.2-decision-graph-design.md`；实现任务拆解见 `docs/plans/`。
 
