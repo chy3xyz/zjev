@@ -1,41 +1,43 @@
-# ZJEV 使用手册
+# ZJEV User Manual
 
-Typed Probabilistic Decision Runtime —— 把非结构化状态（文本）转换为
-**经过概率校准**的结构化决策。Zig 0.17 实现，可选 ONNX 真模型后端。
+Typed Probabilistic Decision Runtime — turn unstructured state (text) into
+**probability-calibrated structured decisions**. Implemented in Zig 0.17,
+with an optional ONNX backend for real models.
 
-- 协议与理论：`docs/rfc-0001-zjev-decision-runtime.md`、`docs/prd.md`、`docs/quest1.md`
-- 设计规格：`docs/specs/2026-09-24-zjev-v0.2-decision-graph-design.md`
-- 训练报告：`docs/reports/2026-09-25-laya-head-training-report.md`
-- 实测记录：`benchmarks/`
+- Protocol & theory: `docs/rfc-0001-zjev-decision-runtime.md`, `docs/prd.md`, `docs/quest1.md`
+- Design spec: `docs/specs/2026-09-24-zjev-v0.2-decision-graph-design.md`
+- Training report: `docs/reports/2026-09-25-laya-head-training-report.md`
+- Measured benchmarks: `benchmarks/`
 
 ---
 
-## 1. 安装与构建
+## 1. Installation & build
 
-### 环境要求
+### Requirements
 
-| 依赖 | 版本 | 说明 |
+| Dependency | Version | Notes |
 |---|---|---|
-| Zig | 0.17.0-dev（经 zigup 安装） | 必须 |
-| onnxruntime + onnxruntime-extensions 动态库 | 1.30 / 0.15.2 | 仅真模型后端需要，已随仓库提供于 `export/laya/lib/`（版本自洽的一对，勿混用） |
-| Python venv + torch | 见 `export/laya/requirements.txt` | 仅训练/导出模型需要 |
+| Zig | 0.17.0-dev (via zigup) | required |
+| onnxruntime + onnxruntime-extensions shared libs | 1.30 / 0.15.2 | only for the real-model backend; a version-matched pair ships in `export/laya/lib/` — do not mix with other copies |
+| Python venv + torch | see `export/laya/requirements.txt` | only for training/exporting models |
 
-### 构建
+### Build
 
 ```bash
-zig build                              # 默认构建：zjev-serve / zjev-fit / zjev-bench / zjev-traj / zjev-conformance
-zig build test                         # 单元测试
-zig build test-conformance             # 协议 conformance fixtures（应 10 pass 0 fail）
-zig build -Donnx=true -Donnx_lib_dir=$PWD/export/laya/lib   # ONNX 后端构建
+zig build                              # default build: zjev-serve / zjev-fit / zjev-bench / zjev-traj / zjev-conformance
+zig build test                         # unit tests
+zig build test-conformance             # protocol conformance fixtures (expect 10 pass, 0 fail)
+zig build -Donnx=true -Donnx_lib_dir=$PWD/export/laya/lib   # ONNX backend build
 ```
 
-> **陷阱**：`zig build`（不带 onnx flag）会覆盖 onnx 构建出的二进制。
-> 跑任何带 `--model` 的工具/serve 前，必须显式用 `-Donnx=true` 重建，
-> 否则启动即报「--model requires an onnx build」并提示重建命令。
+> **Gotcha**: a plain `zig build` (without the onnx flags) overwrites the
+> ONNX-enabled binaries. Always rebuild with `-Donnx=true` before running any
+> `--model` tool or server, or you get "--model requires an onnx build" with
+> the rebuild hint.
 
 ---
 
-## 2. 五分钟上手（mock 模式，无需模型）
+## 2. Five-minute tour (mock mode, no model)
 
 ```bash
 zig build
@@ -43,11 +45,11 @@ zig-out/bin/zjev-serve --port 9377
 curl -s -X POST localhost:9377/v1/decide -d @examples/request.json
 ```
 
-`examples/request.json`：
+`examples/request.json`:
 
 ```json
 {
-  "state": { "text": "用户近 24h 链上交易 17 笔，余额 3.2 SOL，合约交互 8 次" },
+  "state": { "text": "17 on-chain transactions in 24h, balance 3.2 SOL, 8 contract interactions" },
   "decisions": [
     { "id": "risk_level", "type": "choice", "options": ["low", "medium", "high"], "abstain": true },
     { "id": "churn_7d", "type": "score", "scale": { "min": 1, "max": 5 } }
@@ -55,80 +57,87 @@ curl -s -X POST localhost:9377/v1/decide -d @examples/request.json
 }
 ```
 
-mock 概率分布可用 `--mock-mode uniform|peaked|sequence` 切换；
-`--scheduler --cache` 开启 Queue 批处理 + 单飞缓存。
+Mock distributions: `--mock-mode uniform|peaked|sequence`
+(default `peaked`). `--scheduler --cache` enables queue batching and
+single-flight caching.
 
 ---
 
-## 3. 核心概念
+## 3. Core concepts
 
-**State（状态）**：非结构化输入。`text` 字段喂给模型（图内 tokenizer）；
-`id/data/embeddings/timestamp/source` 为元数据。目前真模型只用 `text`。
+**State** — the unstructured input. The `text` field feeds the model
+(in-graph tokenizer); `id/data/embeddings/timestamp/source` are metadata.
+The bundled real model uses `text` only.
 
-**Decision schema（决策模式）**：声明决策类型与合法输出空间，是请求、
-图、模型束三方的契约。类型见 §5.1。
+**Decision schema** — declares the decision type and its legal output space;
+the contract shared by requests, graphs, and model bundles. Types: §5.1.
 
-**Uncertainty（不确定性）**：每个决策结果携带：
-- `confidence`：置信度。choice/score/rank 为预测类最大概率；**noul 为 P(yes)**
-  （正类检测分——Gate 阈值语义依赖这一点）
-- `entropy` / `variance`（score）：分布弥散度
-- `abstention`：仅当 `"abstain": true` 时存在，模型给「拒答」列的概率
+**Uncertainty** — every result carries:
+- `confidence`: choice/score/rank → max class probability; **noul → P(yes)**
+  (positive-class detector score — gate thresholds depend on this)
+- `entropy` / `variance` (score) — distribution spread
+- `abstention` — present only with `"abstain": true`; probability mass of
+  the model's "decline to answer" column
 
-**Temperature / Profiles（温度标定）**：不重训修正过自信的 softmax。
-serve 带 `--profiles-dir` 时，按 (model_name, decision task, num_options,
-domain) 查 `model/calibration/*.json` 里的 temperature，对 logits 除 T
-再 softmax。T>1 软化（治过自信），T<1 锐化。判定结果（argmax）不变。
+**Temperature / profiles** — fix overconfident softmax without retraining.
+With `--profiles-dir`, the serve looks up a temperature per
+(model_name, task, num_options, domain) from `model/calibration/*.json`
+and applies `softmax(logits / T)`. T>1 softens (fixes overconfidence),
+T<1 sharpens. Argmax decisions never change.
 
-**Decision Graph（V0.2）**：决策按 DAG 连接，边带 `when` 条件表达式；
-条件不成立的支路整支跳过（响应 `skipped[]`）。节点可挂 Gate 策略门。
-单请求内全图共享一次 encoder 前向（全量预取 + 激活波模拟）。
+**Decision graph (V0.2)** — decisions wired in a DAG; edges carry `when`
+condition expressions; branches whose conditions fail are skipped
+(`skipped[]`). Nodes may carry policy gates. One encoder forward serves the
+whole graph (full prefetch + activation-wave simulation).
 
-**Gate（策略门）**：
+**Gate**:
 
 ```
 confidence >= threshold        → action_above
 confidence <  threshold        → action_below
-abstention >= threshold（若有）→ action_abstain（优先）
+abstention >= threshold (if set) → action_abstain (takes priority)
 ```
 
-响应里 trajectory step 的 `action` 字段即门输出。阈值调参参考：
-`zjev-fit`/`zjev-traj` 输出的 selective_risk 各档 threshold。
+The step's `action` field in the response is the gate output. Threshold
+tuning reference: the selective_risk thresholds printed by `zjev-fit` /
+`zjev-traj`.
 
 ---
 
-## 4. 快速路径选择
+## 4. Pick your path
 
-| 你想做什么 | 去哪 |
+| I want to… | Go to |
 |---|---|
-| 试试 API、看响应长什么样 | §2 mock 上手 |
-| 接真模型做决策（英文工单场景） | §6 Laya 链路 + §5 API |
-| 决策有依赖/要按条件分支、挂策略门 | §5.3 Decision Graph |
-| 置信度太满/太虚，想修校准 | §7 温度标定 |
-| 评估模型 + 标定效果 | §8 评估工具 |
-| 接入自己的模型（非 Laya） | §5.4 模型契约 |
-| 出错排查 | §9 FAQ |
+| try the API and see response shapes | §2 mock tour |
+| run the bundled real model | §7 Laya pipeline + §5 API |
+| branch on conditions / attach policy gates | §5.3 decision graph |
+| fix over-/under-confident scores | §9 temperature calibration |
+| evaluate model + calibration | §8 eval tools |
+| plug in my own model | §6 model contract |
+| debug an error | §10 FAQ |
 
 ---
 
-## 5. HTTP API 参考
+## 5. HTTP API reference
 
-启动：`./zig-out/bin/zjev-serve --port 9377 [选项]`（选项表见 §8.1）。
+Start: `./zig-out/bin/zjev-serve --port 9377 [options]` (options: §8.1).
 
-### 5.1 决策类型速查
+### 5.1 Decision types
 
-| type | value | 概率 | logitCount（模型束） | 说明 |
+| type | value | probabilities | logitCount (model bundle) | notes |
 |---|---|---|---|---|
-| `noul` | `true/false` | `probability` = P(yes) | 2（`abstain:true` 时 3） | 是/否。**注意默认 `abstain:true`** |
-| `choice` | 选项字符串（或 `"__abstain__"`） | `probabilities{选项: p}` | options 数（+1 若 abstain） | 多选一 |
-| `score` | 期望分 float | `probabilities{档: p}` | 档数（+1 若 abstain） | `scale.labels` 或 `scale.{min,max}` |
-| `rank` | `[{id, score}]` 降序 | `probabilities{item: p}` | items 数 | 排序 |
+| `noul` | `true/false` | `probability` = P(yes) | 2 (3 with `abstain:true`) | yes/no. **Defaults to `abstain:true`** |
+| `choice` | option string (or `"__abstain__"`) | `probabilities{option: p}` | \|options\| (+1 if abstain) | pick one |
+| `score` | expected value (float) | `probabilities{bucket: p}` | #buckets (+1 if abstain) | `scale.labels` or `scale.{min,max}` |
+| `rank` | `[{id, score}]` descending | `probabilities{item: p}` | \|items\| | ordering |
 
-### 5.2 `POST /v1/decide` —— 平面决策
+### 5.2 `POST /v1/decide` — flat decisions
 
-一次前向算全部决策，无图无分支。请求 = `state` + `decisions[]`
-（+ 可选 `domain`，默认 `"general"`；`policy` 字段暂不支持）。
+One forward pass computes all decisions; no graph, no branching.
+Request = `state` + `decisions[]` (+ optional `domain`, default `"general"`;
+`policy` is not yet supported).
 
-响应：
+Response:
 
 ```json
 {
@@ -150,16 +159,17 @@ abstention >= threshold（若有）→ action_abstain（优先）
 }
 ```
 
-- `calibration`：`"matched"` = profiles 命中并应用了温度；`"default"` = 无。
-- 带 `"abstain": true` 的决策，`probabilities` 多出 `"__abstain__"` 键，
-  `uncertainty` 多出 `abstention` 字段。
+- `calibration`: `"matched"` = a temperature profile was applied;
+  `"default"` = none.
+- With `"abstain": true`, `probabilities` gains a `"__abstain__"` key and
+  `uncertainty` gains `abstention`.
 
-**`POST /v1/decide/batch`**：请求体 `{"requests": [<decide 请求>, ...]}`，
-返回数组。配 `--scheduler` 走批处理队列。
+**`POST /v1/decide/batch`** — body `{"requests": [<decide request>, ...]}`,
+returns an array. Pairs with `--scheduler`.
 
-### 5.3 `POST /v1/execute` —— Decision Graph
+### 5.3 `POST /v1/execute` — decision graph
 
-请求在 decide 基础上加 `graph`：
+Same as decide plus a `graph`:
 
 ```json
 {
@@ -185,21 +195,23 @@ abstention >= threshold（若有）→ action_abstain（优先）
 }
 ```
 
-- 节点 `decision` 必须能在 `decisions[]` 里按 id 找到；可选 `gate`。
-- 边 `when` 为条件表达式，请求解析期编译成 AST 并做静态类型检查。
-  语法：`ident == value`、`and/or/not`、比较 `> >= < <= == !=`、
-  字段引用 `decision_id.confidence` / `.value` / `.abstention`
-  （如 `risk.confidence > 0.5 and risk_level == high`）。
-- 执行：一次性前向算全图节点，再沿 frontier 模拟激活波；
-  条件为 false 的下游节点不执行，记入 `skipped[]`。
+- A node's `decision` must match an id in `decisions[]`; `gate` is optional.
+- Edge `when` is a condition expression, compiled to an AST and
+  type-checked at parse time. Syntax: `ident == value`, `and/or/not`,
+  comparisons `> >= < <= == !=`, field refs `decision_id.confidence` /
+  `.value` / `.abstention`
+  (e.g. `risk.confidence > 0.5 and risk_level == high`).
+- Execution: one forward pass computes all nodes, then activation waves walk
+  the frontier; nodes whose conditions fail are not executed and land in
+  `skipped[]`.
 
-响应：
+Response:
 
 ```json
 {
   "trajectory": [
-    {"node_id": "esc", "decision_id": "escalate", "result": { ... }, "action": "route_human"},
-    {"node_id": "topic", "decision_id": "topic", "result": { ... }}
+    {"node_id": "esc", "decision_id": "escalate", "result": { "...": "..." }, "action": "route_human"},
+    {"node_id": "topic", "decision_id": "topic", "result": { "...": "..." }}
   ],
   "skipped": ["urg"],
   "path_prob": 0.6123,
@@ -207,59 +219,62 @@ abstention >= threshold（若有）→ action_abstain（优先）
 }
 ```
 
-`path_prob` = 实际走过路径上各决策条件概率的连乘（轨迹级置信度）。
+`path_prob` = product of per-step condition probabilities along the actual
+path (trajectory-level confidence).
 
-### 5.4 错误码
+### 5.4 Error codes
 
-| HTTP | code | 含义 |
+| HTTP | code | meaning |
 |---|---|---|
-| 400 | `invalid_request` / `InvalidJson` / `MissingField` | 请求体非法/缺字段 |
-| 400 | `BadModelIO` | ΣlogitCount 与图宽不一致（最常见：noul 没写 `"abstain": false`，默认 true 多 1 列） |
-| 400 | `invalid_graph` / `InvalidGraph` | 图结构/条件表达式/gate 阈值非法 |
-| 400 | `unsupported` | 传了 `policy` 等未支持字段 |
-| 503 | `overloaded` | 队列满 |
-| 500 | `internal` | 内部错误 |
+| 400 | `invalid_request` / `InvalidJson` / `MissingField` | malformed body / missing fields |
+| 400 | `BadModelIO` | ΣlogitCount ≠ graph width (most common: noul missing `"abstain": false`; it defaults to true = one extra column) |
+| 400 | `invalid_graph` / `InvalidGraph` | graph structure / condition expression / gate threshold illegal |
+| 400 | `unsupported` | unsupported fields such as `policy` |
+| 503 | `overloaded` | queue full |
 
-错误体统一：`{"error":{"code":"...","message":"..."}}`。
+Error body: `{"error":{"code":"...","message":"..."}}`.
 
 ---
 
-## 6. ONNX 后端与模型契约
+## 6. ONNX backend & model contract
 
-### 6.1 模型契约（自己接入模型时必读）
+### 6.1 Model contract (read before plugging in your own)
 
-- 图内包含 tokenizer：输入 string tensor `text`，输出 float tensor `logits`。
-- **输出 shape 必须静态**；`logits` 宽度 = 固定决策束的 Σ logitCount。
-- 请求 `decisions[]` 的 Σ logitCount 必须与图一致，否则 400 BadModelIO。
-  logitCount：noul=2（abstain:true→3），choice=|options|（+1），
-  score=档数（+1），rank=|items|。
-- logits 按决策在束中的声明顺序分段。
-- 图含 ai.onnx.contrib 自定义 op（HfJsonTokenizer）时必须传
-  `--ort-extensions` 指向 libortextensions 动态库。
+- The graph embeds the tokenizer: input string tensor `text`, output float
+  tensor `logits`.
+- **Output shape must be static**; `logits` width = Σ logitCount of the
+  fixed decision bundle.
+- The request's Σ logitCount must equal the graph width, or 400 BadModelIO.
+  logitCount: noul=2 (3 if abstain:true), choice=|options| (+1),
+  score=#buckets (+1), rank=|items|.
+- Logits are segmented in the bundle's declaration order.
+- If the graph uses ai.onnx.contrib custom ops (HfJsonTokenizer), pass
+  `--ort-extensions` pointing at the extensions library.
 
-### 6.2 动态库配对
+### 6.2 Shared-library pairing
 
-`export/laya/lib/` 是版本自洽的一对（onnxruntime 1.30 取自 pip 轮，
-libortextensions 0.15.2 取自 NuGet），**无 python 依赖**。
-**brew 的 onnxruntime 1.30 在 `RegisterCustomOpsLibrary` 路径上会段错误，
-勿混用。**
+`export/laya/lib/` is a version-matched pair (onnxruntime 1.30 from the pip
+wheel, libortextensions 0.15.2 from the NuGet package), no Python deps.
+**Homebrew's onnxruntime 1.30 segfaults on the
+`RegisterCustomOpsLibrary` path — do not mix.**
 
 ```bash
 zig build -Donnx=true -Donnx_lib_dir=$PWD/export/laya/lib
 ./zig-out/bin/zjev-serve --model <m.onnx> --ort-extensions export/laya/lib/libortextensions.dylib
 ```
 
-`--model` 的文件名（去扩展名）即 `model_name`，profiles 按它匹配。
+`--model`'s file name (sans extension) becomes `model_name`, matched by
+profiles.
 
 ---
 
-## 7. Laya 决策束全链路（仓库内置真模型）
+## 7. The Laya decision bundle (bundled real model)
 
-模型：ModernBERT-large（HuggingFace `convaiinnovations/laya`）+ 自训
-Linear(1024,8) 决策头，束 = escalate-noul(无 abstain) / topic-choice3 /
-urgency-score3（ΣlogitCount=8）。英文场景。
+Model: ModernBERT-large (HuggingFace `convaiinnovations/laya`) + a trained
+Linear(1024,8) head. Bundle = escalate-noul (no abstain) / topic-choice3 /
+urgency-score3 (ΣlogitCount=8). English tickets.
 
-### 7.1 起服务
+### 7.1 Run the server
 
 ```bash
 zig build -Donnx=true -Donnx_lib_dir=$PWD/export/laya/lib
@@ -268,86 +283,92 @@ zig build -Donnx=true -Donnx_lib_dir=$PWD/export/laya/lib
     --profiles-dir model/calibration --port 9377
 ```
 
-注意：请求束必须正好 8 logits——noul 必须显式 `"abstain": false`。
+Note: the request bundle must be exactly 8 logits — noul needs an explicit
+`"abstain": false`.
 
-### 7.2 从头训练（可选，读数见训练报告）
+### 7.2 Train from scratch (optional; readings in the training report)
 
 ```bash
 export/laya/.venv/bin/pip install -r export/laya/requirements.txt
-export/laya/.venv/bin/python export/laya/build_dataset.py   # HF 工单 → 8-logit 束（train/eval）
-export/laya/.venv/bin/python export/laya/train_head.py      # 冻结 encoder 训 head（MPS，~小时级）
+export/laya/.venv/bin/python export/laya/build_dataset.py   # HF tickets → 8-logit bundle (train/eval)
+export/laya/.venv/bin/python export/laya/train_head.py      # frozen-encoder head training (MPS, ~hours)
 export/laya/.venv/bin/python export/laya/export_laya.py --head export/laya/out/head.pt
 export/laya/.venv/bin/python export/laya/smoke_check.py
 ```
 
-### 7.3 当前读数（5652 条 eval，修复图，带 M4 温度标定）
+### 7.3 Current readings (5,652-record eval, fixed graph, M4 calibration on)
 
-| 指标 | 无标定 | 标定后 |
+| metric | uncalibrated | calibrated |
 |---|---|---|
-| trajectory_accuracy | 0.754 | 0.754（不变） |
+| trajectory_accuracy | 0.754 | 0.754 (unchanged) |
 | traj_ece | 0.200 | **0.106** |
 | escalate acc / ece | 0.785 / 0.586 | 0.785 / 0.393 |
 | topic acc / ece | 0.888 / 0.093 | 0.888 / 0.045 |
 
-口径注意：traj 的 noul 节点 ece 用 P(yes)（Gate 语义），与 fit 的
-max-prob ece 不同口径；urgency 在升级路径上金标恒 high，其 ece 是
-退化读数。详见 `benchmarks/temp_laya_2026-09-25.md`。
+Confidence conventions: traj's noul node ECE uses P(yes) (gate semantics),
+which is not comparable to fit's max-prob ECE; on the escalation path the
+urgency gold label is constantly "high", making its ECE a degenerate
+reading. See `benchmarks/temp_laya_2026-09-25.md` for the full discussion.
 
-### 7.4 效果演示
+### 7.4 See calibration in action
 
 ```bash
-# 实例 A（带 profiles）:8790，实例 B（不带）:8791，然后：
+# instance A (:8790, with --profiles-dir) vs instance B (:8791, without)
 python3 export/laya/demo_profiles.py
-# 同一批工单两边对照，直接看置信度从 0.000x/0.999x 饱和区拉回工作区
+# same tickets on both; watch confidences leave the 0.000x/0.999x
+# saturation band and spread into a usable range
 ```
 
 ---
 
-## 8. CLI 工具参考
+## 8. CLI tools
 
 ### 8.1 `zjev-serve`
 
-| 选项 | 默认 | 说明 |
+| option | default | notes |
 |---|---|---|
-| `--bind` / `--port` | 127.0.0.1 / 9377 | 监听地址 |
+| `--bind` / `--port` | 127.0.0.1 / 9377 | listen address |
 | `--mock-mode` | peaked | uniform / peaked / sequence |
-| `--profiles-dir` | 关 | 温度标定目录 |
-| `--scheduler` / `--cache` | 关 | Queue 批处理 / 单飞缓存 |
-| `--model` | 无 | ONNX 模型路径（需 onnx 构建） |
-| `--sessions` | 0=默认 | onnxruntime 会话数（intra-op 线程固定 1，靠调度层并行） |
-| `--ort-extensions` | 无 | 图含自定义 op 时必传 |
+| `--profiles-dir` | off | temperature calibration directory |
+| `--scheduler` / `--cache` | off | queue batching / single-flight cache |
+| `--model` | none | ONNX model path (requires onnx build) |
+| `--sessions` | 0=default | onnxruntime session count (intra-op threads pinned to 1; parallelism via the scheduler) |
+| `--ort-extensions` | none | required when the graph has custom ops |
 
-### 8.2 `zjev-fit` —— 温度拟合
+### 8.2 `zjev-fit` — temperature fitting
 
 ```bash
-# mock 教学：
+# mock, for learning the ropes:
 zig-out/bin/zjev-fit --dataset datasets/calibration_sample.jsonl [--out model/calibration]
-# 真模型束（按 (task,num_options) 分组拟合 T，min NLL）：
+# real model bundle (groups by (task, num_options), minimizes NLL):
 zig-out/bin/zjev-fit --dataset <jsonl> --model m.onnx \
-    [--sessions n] [--ort-extensions lib] --bundle '<完整 schema JSON>' \
+    [--sessions n] [--ort-extensions lib] --bundle '<full schema JSON>' \
     [--model-name n] [--domain d] [--out dir]
 ```
 
-- `--bundle`：束 schema JSON（与 serve 请求同构），给出段表；ΣlogitCount
-  必须等于图宽，单决策跑会 BadModelIO。
-- 数据集每行：`{"state": {...}, "decision": {...}, "label": <bool|string>}`。
-  score 的 label 用字符串档名（`"low"/"medium"/"high"`），整数桶下标会被拒。
-- 同 state 连续记录复用一次前向（state 缓存）；结束打印
-  `fitted: N skipped: M`。
-- 产出 `model/calibration/<model>_<task>_<num>_<domain>.json`：
-  temperature + ece/brier/nll + selective_risk@0.5/0.7/0.9/0.95。
+- `--bundle`: bundle schema JSON (same shape as a serve request) providing
+  the segment table; ΣlogitCount must equal the graph width — a single
+  decision will 400 BadModelIO.
+- Dataset line: `{"state": {...}, "decision": {...}, "label": <bool|string>}`.
+  For score decisions use the string bucket name (`"low"/"medium"/"high"`);
+  integer bucket indices are rejected.
+- Consecutive records with the same state reuse one forward (state cache);
+  prints `fitted: N skipped: M` at the end.
+- Output `model/calibration/<model>_<task>_<num>_<domain>.json`:
+  temperature + ece/brier/nll + selective_risk@0.5/0.7/0.9/0.95.
 
-### 8.3 `zjev-traj` —— 轨迹级评估（quest1 §12 实验台）
+### 8.3 `zjev-traj` — trajectory-level eval (the quest1 §12 testbed)
 
 ```bash
 zig-out/bin/zjev-traj --dataset <jsonl> [--mock-mode m] [--profiles-dir d] \
     [--model m.onnx [--sessions n] [--ort-extensions lib]]
 ```
 
-数据集每行：`{"state":..., "decisions":[...], "graph":{...}, "expected":{decision_id: gold}}`。
-读数走 **stderr**（`2>readings.json`）。输出：trajectory_accuracy /
-traj_brier / traj_ece / traj_mce / selective_risk 四档 / by_node
-（每节点 acc + ece）。CPU + 大模型约 2h/5652 条。
+Dataset line:
+`{"state":..., "decisions":[...], "graph":{...}, "expected":{decision_id: gold}}`.
+Readings go to **stderr** (`2>readings.json`). Output: trajectory_accuracy /
+traj_brier / traj_ece / traj_mce / selective_risk (four coverage tiers) /
+by_node (per-node acc + ece). CPU + large model ≈ 2 h per 5,652 records.
 
 ### 8.4 `zjev-bench`
 
@@ -355,66 +376,72 @@ traj_brier / traj_ece / traj_mce / selective_risk 四档 / by_node
 zig-out/bin/zjev-bench --dataset <jsonl> [--profiles-dir dir]
 ```
 
-平面校准报告：accuracy / brier / ece / mce + selective_risk 四档。
+Flat calibration report: accuracy / brier / ece / mce + selective_risk.
 
 ### 8.5 `zjev-conformance`
 
-协议 fixtures 校验，`zig build test-conformance` 即跑（应 10 pass 0 fail）。
+Protocol fixture validation — `zig build test-conformance` (expect
+10 pass, 0 fail).
 
 ---
 
-## 9. 温度标定工作流（M4）
+## 9. Temperature calibration workflow (M4)
 
-**什么时候需要**：单跳 ece 高（置信度挤在 0/1）、selective_risk 阈值
-落在≈1.0 饱和区、Gate 阈值没法调。
+**When you need it**: single-hop ECE is high (confidence piled at 0/1),
+selective_risk thresholds land in the ≈1.0 saturation band, gate thresholds
+are effectively untunable.
 
-**步骤**：
+**Steps**:
 
-1. 造拟合集：覆盖各决策、带金标 label（同分布、与评估集互斥最佳——
-   本仓库 M4 用 eval split 展开，见 `export/laya/build_calib.py`）。
-2. 拟合：`zjev-fit --model ... --bundle ...`（真模型）。
-3. 挂 profiles 起 serve / 复测 traj。
-4. 对比读数：acc 应不变（T 保序），ece/brier 应降，selective_risk
-   threshold 应离开饱和区。
+1. Build a calibration set: cover all decisions, with gold labels
+   (same distribution as production; disjoint from the eval set is best —
+   M4 expanded the eval split, see `export/laya/build_calib.py`).
+2. Fit: `zjev-fit --model ... --bundle ...` (real model).
+3. Serve with `--profiles-dir`, or re-run `zjev-traj` for measurement.
+4. Compare: accuracy should not move (T preserves argmax); ece/brier should
+   drop; selective_risk thresholds should leave the saturation band.
 
-本仓库实例：escalate T=9.61 / topic T=4.82 / urgency T=7.97，
-traj_ece 0.200→0.106，benchmark 见 `benchmarks/temp_laya_2026-09-25.md`。
+Bundled example: escalate T=9.61 / topic T=4.82 / urgency T=7.97,
+traj_ece 0.200→0.106 — see `benchmarks/temp_laya_2026-09-25.md`.
 
 ---
 
-## 10. 故障排查 FAQ
+## 10. Troubleshooting FAQ
 
-| 症状 | 原因与处理 |
+| symptom | cause & fix |
 |---|---|
-| `--model requires an onnx build` | 二进制被普通 `zig build` 覆盖了；`zig build -Donnx=true -Donnx_lib_dir=...` 重建 |
-| 400 BadModelIO | ΣlogitCount ≠ 图宽。最常见：noul 漏写 `"abstain": false`（默认 true 多一列） |
-| serve 启动段错误（ RegisterCustomOpsLibrary 附近） | onnxruntime 与 ortextensions 版本不配/混用了 brew 的库；用 `export/laya/lib/` 这一对 |
-| 400 InvalidJson | 请求体不是合法 JSON 或字段类型错（如 score 的 label 传了整数桶下标） |
-| 400 InvalidGraph | 条件表达式语法错、引用了不存在的 decision、gate threshold 不在 [0,1] |
-| traj/fit 半天没输出 | 不是卡死：日志只在批末打印；看 `ps cputime` 是否在涨 |
-| topic/urgency 结果看着像瞎猜 | 已知模型局限（合成模板训练数据），见 §11 |
-| urgency acc 恒 1.0 | 升级路径金标恒 high 的退化读数，非模型逆天 |
+| `--model requires an onnx build` | binary overwritten by plain `zig build`; rebuild with `zig build -Donnx=true -Donnx_lib_dir=...` |
+| 400 BadModelIO | ΣlogitCount ≠ graph width. Most common: noul missing `"abstain": false` (defaults true = extra column) |
+| segfault at startup near `RegisterCustomOpsLibrary` | onnxruntime/ortextensions version mismatch (often Homebrew's); use the matched pair in `export/laya/lib/` |
+| 400 InvalidJson | malformed body or wrong field type (e.g. integer bucket index as a score label) |
+| 400 InvalidGraph | bad condition syntax, unknown decision reference, gate threshold outside [0,1] |
+| traj/fit silent for a long time | not stuck: logs print only at batch end; check `ps cputime` is growing |
+| topic/urgency look like guesses | known model limitation (synthetic template training data), see §11 |
+| urgency acc constantly 1.0 | degenerate reading: gold is constantly "high" on the escalation path, not model magic |
 
 ---
 
-## 11. 已知限制
+## 11. Known limitations
 
-1. **合成模板训练数据**：Laya head 训在模板化工单上，自然文本上会有
-   判错（标定只管置信度诚实，管不了判错）；换真实分布数据是最高优先
-   后续项。
-2. **escalate/urgency 标签共线**：escalate=true ⇒ 金标 urgency=high。
-3. **noul 的 confidence 语义是 P(yes)**：traj by_node ece 与 fit ece
-   不同口径，对比时先看 `benchmarks/temp_laya_2026-09-25.md` 的说明。
-4. traj/fit 在 CPU 上串行，大模型约 2h/5652 条——交互评估的瓶颈。
+1. **Synthetic template training data**: the Laya head is trained on
+   templated tickets and will mislabel natural text (calibration makes
+   confidence honest, not correct). Real-distribution data is the top
+   follow-up.
+2. **Collinear labels**: escalate=true ⇒ gold urgency=high by construction.
+3. **noul confidence is P(yes)**: traj by_node ECE and fit ECE use different
+   confidence conventions — read the notes in
+   `benchmarks/temp_laya_2026-09-25.md` before comparing.
+4. `zjev-traj`/`zjev-fit` are CPU-serial: ~2 h per 5,652 records with the
+   large model — the bottleneck for interactive evaluation.
 
 ---
 
-## 12. 版本里程碑
+## 12. Milestones
 
-| 里程碑 | 内容 |
+| milestone | content |
 |---|---|
-| V0.1 | 核心运行时 + mock/ONNX 后端 + 校准协议 |
-| V0.2 | Decision Graph（条件分支 + Gate + 全量预取多 wave） |
-| M2 | Laya 冻结 head 训练 + 导出 + 实测（坏图读数已勘误） |
-| M3 | 解冻末 2 层微调 + tokenizer [CLS]/[SEP] 修复图 |
-| M4 | 温度标定端到端（本文 §9） |
+| V0.1 | core runtime + mock/ONNX backends + calibration protocol |
+| V0.2 | decision graph (conditions + gates + multi-wave prefetch) |
+| M2 | Laya frozen-head training + export + real readings (broken-graph readings since corrected) |
+| M3 | unfreeze-last-2 fine-tune + tokenizer `[CLS]/[SEP]` in-graph fix |
+| M4 | end-to-end temperature calibration (this manual §9) |
